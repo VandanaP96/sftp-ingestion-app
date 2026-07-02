@@ -6,7 +6,7 @@ streamlit:
   main_file: streamlit_app.py
   title: "SFTP Ingestion — File Review"
   additional_source_files:
-    - "services/snowflake_service.py"
+    - "services/snowflake_services.py"
     - "services/__init__.py"
     - "utils/helpers.py"
     - "utils/__init__.py"
