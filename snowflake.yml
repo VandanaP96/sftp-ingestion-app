@@ -4,9 +4,10 @@ streamlit:
   stage: streamlit_stage
   query_warehouse: COMPUTE_WH
   main_file: streamlit_app.py
-  title: "SFTP Ingestion — File Review"
+  title: "SFTP Ingestion - File Review"
+  env_file: environment.yml
   additional_source_files:
-    - "services/snowflake_services.py"
+    - "services/snowflake_service.py"
     - "services/__init__.py"
     - "utils/helpers.py"
     - "utils/__init__.py"
