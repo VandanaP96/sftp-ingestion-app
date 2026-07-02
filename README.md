@@ -85,3 +85,5 @@ snow streamlit deploy
 | `V003__...` | Next change goes here |
 
 New schema changes always get a new versioned file — never edit an existing one.
+
+---
