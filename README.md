@@ -8,12 +8,12 @@ Meduit FACS MDM — SFTP File Ingestion & Curation
 
 This repo contains the full SFTP ingestion curation layer:
 
-| Component | Owner | Location |
-|---|---|---|
-| Snowflake schema (DDL) | Himanshu Kumar | `sql/V001__create_tables.sql` |
-| Dev seed data | Himanshu Kumar | `sql/V002__seed_data.sql` |
-| Streamlit review UI | Himanshu Kumar | `streamlit_app.py` |
-| .NET scanner service | Thameem Ansari | `dotnet/` |
+| Component | Location |
+|---|---|
+| Snowflake schema (DDL) | `sql/V001__create_tables.sql` |
+| Dev seed data | `sql/V002__seed_data.sql` |
+| Streamlit review UI | `streamlit_app.py` |
+| .NET scanner service | `dotnet/` |
 
 ---
 
@@ -85,5 +85,3 @@ snow streamlit deploy
 | `V003__...` | Next change goes here |
 
 New schema changes always get a new versioned file — never edit an existing one.
-
----
