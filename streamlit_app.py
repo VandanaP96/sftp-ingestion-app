@@ -20,7 +20,11 @@ st.set_page_config(page_title="SFTP File Review", page_icon="📂", layout="wide
 st.markdown("""
 <style>
     [data-testid="stSidebar"] { background-color: #1B2A4A !important; }
-    [data-testid="stSidebar"] * { color: #FFFFFF !important; }
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] .stMarkdown,
+    [data-testid="stSidebar"] .stButton button { color: #FFFFFF !important; }
     [data-testid="stSidebar"] .stSelectbox label,
     [data-testid="stSidebar"] p,
     [data-testid="stSidebar"] span { color: #CBD5E1 !important; font-size:0.82rem; }
