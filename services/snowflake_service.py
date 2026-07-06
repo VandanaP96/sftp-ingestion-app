@@ -1,5 +1,5 @@
 """
-services/snowflake_services.py
+services/snowflake_service.py
 All Snowflake read/write operations — schema v2 (3-status model)
 """
 
