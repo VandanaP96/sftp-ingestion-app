@@ -1,16 +1,17 @@
 """
 SFTP Ingestion - File Review Screen v2
-Streamlit in Snowflake | Thameem's schema v2 (3-status model)
+Streamlit in Snowflake | Schema v2 (3-status model)
 Database : MEDUIT_DEX | Schema : SFTP_INGESTION
 """
 
 import streamlit as st
+import pandas as pd
 from services.snowflake_service import (
-    get_clients, get_folders, get_files,
-    get_approval_counts, approve_all, reject_all,
-    rename_and_approve, get_activity_log
+    get_clients, get_folders, get_files, get_approval_counts,
+    approve_all, approve_files, reject_all, reject_files,
+    rename_and_approve, log_action, get_activity_log
 )
-from utils.helpers import me, log_bulk
+from utils.helpers import me
 
 
 # ── page config ───────────────────────────────────────────────────────────────
@@ -23,11 +24,7 @@ st.markdown("""
     [data-testid="stSidebar"] label,
     [data-testid="stSidebar"] p,
     [data-testid="stSidebar"] span,
-    [data-testid="stSidebar"] .stMarkdown,
-    [data-testid="stSidebar"] .stButton button { color: #FFFFFF !important; }
-    [data-testid="stSidebar"] .stSelectbox label,
-    [data-testid="stSidebar"] p,
-    [data-testid="stSidebar"] span { color: #CBD5E1 !important; font-size:0.82rem; }
+    [data-testid="stSidebar"] .stMarkdown { color: #FFFFFF !important; }
     [data-testid="stSidebar"] hr { border-color: #2E4270 !important; }
 
     .app-brand  { font-size:1.05rem; font-weight:700; color:#FFFFFF; letter-spacing:0.5px; margin-bottom:4px; }
@@ -44,19 +41,18 @@ st.markdown("""
     .chip-auto { background:#FFF7ED; color:#9A3412; border:1px solid #FDBA74; }
     .chip-ren  { background:#FEFCE8; color:#854D0E; border:1px solid #FDE047; }
 
-    .tbl-header { font-size:0.75rem; font-weight:700; color:#0097A7;
-                  text-transform:uppercase; letter-spacing:0.5px;
-                  padding:8px 0 6px 0; border-bottom:1px solid #E2E8F0; margin-bottom:4px; }
+    .tbl-header   { font-size:0.75rem; font-weight:700; color:#0097A7;
+                    text-transform:uppercase; letter-spacing:0.5px;
+                    padding:8px 0 6px 0; border-bottom:1px solid #E2E8F0; margin-bottom:4px; }
     .action-label { font-size:0.78rem; color:#64748B; font-weight:600;
                     text-transform:uppercase; letter-spacing:0.4px; margin-bottom:6px; }
-    .path-pill  { background:#F1F5F9; border:1px solid #CBD5E1; border-radius:6px;
-                  padding:6px 12px; font-size:0.78rem; color:#475569;
-                  font-family:monospace; margin-bottom:1rem; word-break:break-all; }
-    .rename-box { background:#FFFBEB; border:1px solid #FDE68A; border-radius:8px;
-                  padding:12px 16px; margin-bottom:8px; }
-    .rename-lbl { font-size:0.78rem; color:#92400E; font-weight:600; margin-bottom:4px; }
-    .auto-rej-box { background:#FFF7ED; border:1px solid #FDBA74; border-radius:8px;
+    .path-pill    { background:#F1F5F9; border:1px solid #CBD5E1; border-radius:6px;
+                    padding:6px 12px; font-size:0.78rem; color:#475569;
+                    font-family:monospace; margin-bottom:1rem; word-break:break-all; }
+    .rename-box   { background:#FFFBEB; border:1px solid #FDE68A; border-radius:8px;
                     padding:12px 16px; margin-bottom:8px; }
+    .rename-lbl   { font-size:0.78rem; color:#92400E; font-weight:600; margin-bottom:4px; }
+    .partial-note { font-size:0.78rem; color:#6B7280; font-style:italic; margin-top:4px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -82,7 +78,6 @@ with st.sidebar:
     header_id       = int(selected_client["HEADER_ID"])
 
     st.markdown("---")
-
     st.markdown("**Year-Month**")
     folders = get_folders(header_id)
     if folders.empty:
@@ -132,76 +127,119 @@ st.markdown(
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# ── load all files ────────────────────────────────────────────────────────────
+# ── load files ────────────────────────────────────────────────────────────────
 
-all_files = get_files(folder_id)
-
+all_files     = get_files(folder_id)
 if all_files.empty:
     st.info("No files found for this client and folder.")
     st.stop()
 
-# Split into groups
-normal_files      = all_files[all_files["APPROVAL_STATUS"] == "PENDING"]
-rename_files      = all_files[all_files["APPROVAL_STATUS"] == "RENAME_REQUIRED"]
-auto_reject_files = all_files[all_files["FILE_STATUS"]     == "AUTO_REJECTED"]
-done_files        = all_files[all_files["APPROVAL_STATUS"].isin(["APPROVED", "REJECTED"]) &
-                               (all_files["FILE_STATUS"] != "AUTO_REJECTED")]
+normal_files  = all_files[all_files["APPROVAL_STATUS"] == "PENDING"].reset_index(drop=True)
+rename_files  = all_files[all_files["APPROVAL_STATUS"] == "RENAME_REQUIRED"].reset_index(drop=True)
+auto_rej      = all_files[all_files["FILE_STATUS"]     == "AUTO_REJECTED"].reset_index(drop=True)
+done_files    = all_files[
+    all_files["APPROVAL_STATUS"].isin(["APPROVED", "REJECTED"]) &
+    (all_files["FILE_STATUS"] != "AUTO_REJECTED")
+].reset_index(drop=True)
+
+total_pending = len(normal_files)
 
 
-# ── Section 1: Files pending review ───────────────────────────────────────────
+# ── Section 1: Pending Review ─────────────────────────────────────────────────
 
 st.markdown(
-    f'<div class="tbl-header">Pending Review — {len(normal_files)} files</div>',
+    f'<div class="tbl-header">Pending Review — {total_pending} files</div>',
     unsafe_allow_html=True
 )
 
 if normal_files.empty:
     st.caption("No files pending review.")
 else:
-    st.dataframe(
-        normal_files[["DETAIL_ID", "CURRENT_FILE_NAME", "FILE_TYPE",
-                      "FILE_SIZE_KB", "VALID_DATE_FLAG", "VALIDATION_MESSAGE",
-                      "FILE_STATUS", "APPROVAL_STATUS"]],
-        use_container_width=True,
-        hide_index=True,
-    )
-
-    # Bulk actions for normal pending files
-    st.markdown('<div class="action-label">Bulk Action — applies to all pending files</div>',
-                unsafe_allow_html=True)
-
+    # ── action radio (above table) ────────────────────────────────────────────
+    st.markdown('<div class="action-label">Bulk Action</div>', unsafe_allow_html=True)
     action = st.radio(
         "",
-        options=["— Select action —", "✅  Approve All", "❌  Reject All"],
+        options=["— Select action —", "✅  Approve", "❌  Reject"],
         horizontal=True,
         index=0,
         key=f"action_{folder_id}",
     )
 
-    pending_ids = normal_files["DETAIL_ID"].tolist()
+    # ── build display dataframe with Select column ────────────────────────────
+    display = normal_files[["DETAIL_ID", "CURRENT_FILE_NAME", "FILE_TYPE",
+                             "FILE_SIZE_KB", "VALID_DATE_FLAG",
+                             "VALIDATION_MESSAGE"]].copy()
 
-    if action == "✅  Approve All":
-        st.info(f"This will approve all **{len(pending_ids)}** pending file(s) in `{selected_ym}`.")
-        if st.button("Confirm Approve All", type="primary"):
-            approve_all(folder_id, header_id, user)
-            log_bulk(folder_id, header_id, pending_ids,
-                     "FILE_APPROVED", "StreamlitReview",
-                     "Bulk approved from SFTP review screen.", user)
-            st.success(f"✅ Approved {len(pending_ids)} file(s).")
+    # Auto-tick all if Approve or Reject selected
+    if action in ["✅  Approve", "❌  Reject"]:
+        display.insert(0, "Select", True)
+    else:
+        display.insert(0, "Select", False)
+
+    edited = st.data_editor(
+        display,
+        column_config={
+            "Select":           st.column_config.CheckboxColumn("✔", width="small"),
+            "DETAIL_ID":        st.column_config.NumberColumn("ID", width="small"),
+            "CURRENT_FILE_NAME":st.column_config.TextColumn("File Name", width="large"),
+            "FILE_TYPE":        st.column_config.TextColumn("Type", width="medium"),
+            "FILE_SIZE_KB":     st.column_config.NumberColumn("Size (KB)", width="small"),
+            "VALID_DATE_FLAG":  st.column_config.TextColumn("Valid Date", width="small"),
+            "VALIDATION_MESSAGE":st.column_config.TextColumn("Validation", width="medium"),
+        },
+        use_container_width=True,
+        hide_index=True,
+        num_rows="fixed",
+        key=f"tbl_{folder_id}",
+    )
+
+    # ── derive selected IDs ───────────────────────────────────────────────────
+    selected_rows = edited[edited["Select"] == True]
+    selected_ids  = normal_files.loc[selected_rows.index, "DETAIL_ID"].tolist()
+    is_full_bulk  = len(selected_ids) == total_pending
+
+    if selected_ids and action != "— Select action —":
+        # Show partial note if not all selected
+        if not is_full_bulk:
+            st.markdown(
+                f'<div class="partial-note">'
+                f'{len(selected_ids)} of {total_pending} files selected — partial action.</div>',
+                unsafe_allow_html=True
+            )
+
+    # ── confirm button ────────────────────────────────────────────────────────
+    if action == "✅  Approve" and selected_ids:
+        if st.button("Confirm Approve", type="primary"):
+            if is_full_bulk:
+                approve_all(folder_id, header_id, user)
+                log_action(header_id, folder_id, None,
+                           "APPROVAL", "SUCCESS", "Folder Approved", user)
+            else:
+                approve_files(selected_ids, folder_id, header_id, user)
+                for did in selected_ids:
+                    log_action(header_id, folder_id, did,
+                               "APPROVAL", "SUCCESS", "File Approved", user)
+            st.success(f"✅ Approved {len(selected_ids)} file(s).")
             st.rerun()
 
-    elif action == "❌  Reject All":
+    elif action == "❌  Reject" and selected_ids:
         reason = st.text_input(
             "Rejection reason (optional)",
-            placeholder="e.g. Wrong period, duplicate batch…"
+            placeholder="e.g. Wrong period, duplicate batch…",
+            key="reject_reason"
         )
-        st.info(f"This will reject all **{len(pending_ids)}** pending file(s) in `{selected_ym}`.")
-        if st.button("Confirm Reject All", type="secondary"):
-            reject_all(folder_id, header_id, user, reason)
-            log_bulk(folder_id, header_id, pending_ids,
-                     "FILE_REJECTED", "StreamlitReview",
-                     f"Bulk rejected. Reason: {reason or 'N/A'}", user)
-            st.success(f"❌ Rejected {len(pending_ids)} file(s).")
+        if st.button("Confirm Reject", type="secondary"):
+            if is_full_bulk:
+                reject_all(folder_id, header_id, user, reason)
+                log_action(header_id, folder_id, None,
+                           "REJECTION", "SUCCESS", "Folder Rejected", user)
+            else:
+                reject_files(selected_ids, folder_id, header_id, user, reason)
+                for did in selected_ids:
+                    log_action(header_id, folder_id, did,
+                               "REJECTION", "SUCCESS",
+                               f"File Rejected. Reason: {reason or 'N/A'}", user)
+            st.success(f"❌ Rejected {len(selected_ids)} file(s).")
             st.rerun()
 
 
@@ -213,8 +251,8 @@ if not rename_files.empty:
         f'<div class="tbl-header">⚠️ Rename Required — {len(rename_files)} files</div>',
         unsafe_allow_html=True
     )
-    st.caption("These files need a corrected filename before they can be approved. "
-               "Enter the new name and click **Rename & Approve**.")
+    st.caption("Enter the corrected filename and click Rename & Approve. "
+               "The .NET service will rename the file on disk once submitted.")
 
     for _, row in rename_files.iterrows():
         detail_id = int(row["DETAIL_ID"])
@@ -228,35 +266,38 @@ if not rename_files.empty:
             value=row["CURRENT_FILE_NAME"],
             key=f"rename_{detail_id}",
         )
-        col1, col2 = st.columns([2, 8])
+        col1, _ = st.columns([2, 8])
         with col1:
             if st.button("Rename & Approve", key=f"btn_rename_{detail_id}", type="primary"):
                 if not new_name.strip():
                     st.error("Please enter a valid filename.")
                 else:
-                    rename_and_approve(detail_id, new_name.strip(), folder_id, header_id, user)
-                    st.success(f"✅ Renamed and approved: `{new_name.strip()}`")
+                    rename_and_approve(detail_id, new_name.strip(),
+                                       folder_id, header_id, user)
+                    log_action(header_id, folder_id, detail_id,
+                               "RENAME_REQUEST", "SUCCESS",
+                               f"Rename Approved. New name: {new_name.strip()}", user)
+                    st.success(f"✅ Rename submitted: `{new_name.strip()}`")
                     st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
 
-# ── Section 3: Auto-Rejected (read only) ──────────────────────────────────────
+# ── Section 3: Auto-Rejected ──────────────────────────────────────────────────
 
-if not auto_reject_files.empty:
+if not auto_rej.empty:
     st.markdown("<br>", unsafe_allow_html=True)
-    with st.expander(f"🚫 Auto-Rejected by Scanner — {len(auto_reject_files)} files (read only)"):
-        st.caption("These files were automatically rejected by the .NET scanner due to invalid date. "
-                   "No action can be taken.")
+    with st.expander(f"🚫 Auto-Rejected by Scanner — {len(auto_rej)} files (read only)"):
+        st.caption("Automatically rejected by the .NET scanner due to invalid date. No action available.")
         st.dataframe(
-            auto_reject_files[["DETAIL_ID", "ORIGINAL_FILE_NAME", "FILE_TYPE",
-                                "VALID_DATE_FLAG", "VALIDATION_MESSAGE",
-                                "FILE_STATUS", "QUARANTINE_PATH"]],
+            auto_rej[["DETAIL_ID", "ORIGINAL_FILE_NAME", "FILE_TYPE",
+                       "VALID_DATE_FLAG", "VALIDATION_MESSAGE",
+                       "FILE_STATUS", "QUARANTINE_PATH"]],
             use_container_width=True,
             hide_index=True,
         )
 
 
-# ── Section 4: Already actioned ───────────────────────────────────────────────
+# ── Section 4: Already Actioned ───────────────────────────────────────────────
 
 if not done_files.empty:
     st.markdown("<br>", unsafe_allow_html=True)

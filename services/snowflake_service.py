@@ -1,6 +1,7 @@
 """
-services/snowflake_service.py
+services/snowflake_services.py
 All Snowflake read/write operations — schema v2 (3-status model)
+Aligned with Thameem's approved query templates.
 """
 
 import pandas as pd
@@ -16,6 +17,8 @@ def sql(query: str) -> pd.DataFrame:
 def execute(query: str):
     session.sql(query).collect()
 
+
+# ── read ──────────────────────────────────────────────────────────────────────
 
 def get_clients() -> pd.DataFrame:
     return sql(f"""
@@ -63,7 +66,6 @@ def get_files(folder_id: int) -> pd.DataFrame:
 
 
 def get_approval_counts(folder_id: int) -> dict:
-    # APPROVAL_STATUS counts
     df = sql(f"""
         SELECT APPROVAL_STATUS AS STATUS, COUNT(*) AS CNT
         FROM   {DB}.FILE_BATCH_DETAIL
@@ -71,64 +73,163 @@ def get_approval_counts(folder_id: int) -> dict:
         GROUP  BY APPROVAL_STATUS
     """)
     counts = df.set_index("STATUS")["CNT"].to_dict() if not df.empty else {}
-
-    # AUTO_REJECTED comes from FILE_STATUS, not APPROVAL_STATUS
     auto = sql(f"""
-        SELECT COUNT(*) AS CNT
-        FROM   {DB}.FILE_BATCH_DETAIL
-        WHERE  FOLDER_ID     = {folder_id}
-          AND  FILE_STATUS   = 'AUTO_REJECTED'
+        SELECT COUNT(*) AS CNT FROM {DB}.FILE_BATCH_DETAIL
+        WHERE  FOLDER_ID = {folder_id} AND FILE_STATUS = 'AUTO_REJECTED'
     """)
     counts["AUTO_REJECTED"] = int(auto.iloc[0]["CNT"]) if not auto.empty else 0
     return counts
 
 
+# ── folder + header refresh ───────────────────────────────────────────────────
+
+def _refresh_folder(folder_id: int, folder_status: str, header_id: int, user: str):
+    execute(f"""
+        UPDATE {DB}.FILE_BATCH_FOLDER
+        SET    FOLDER_STATUS  = '{folder_status}',
+               APPROVED_FILES = (SELECT COUNT(*) FROM {DB}.FILE_BATCH_DETAIL
+                                  WHERE FOLDER_ID = {folder_id}
+                                    AND APPROVAL_STATUS = 'APPROVED'),
+               REJECTED_FILES = (SELECT COUNT(*) FROM {DB}.FILE_BATCH_DETAIL
+                                  WHERE FOLDER_ID = {folder_id}
+                                    AND APPROVAL_STATUS = 'REJECTED'),
+               APPROVED_BY    = '{user}',
+               APPROVED_DATE  = CURRENT_TIMESTAMP(),
+               UPDATED_BY     = '{user}',
+               UPDATED_DATE   = CURRENT_TIMESTAMP()
+        WHERE  FOLDER_ID = {folder_id}
+    """)
+    execute(f"""
+        UPDATE {DB}.FILE_BATCH_HEADER
+        SET    TOTAL_FOLDER_COUNT = (
+                   SELECT COUNT(*) FROM {DB}.FILE_BATCH_FOLDER
+                   WHERE  HEADER_ID = {header_id} AND ACTIVE_FLAG = 'Y'),
+               TOTAL_FILE_COUNT  = (
+                   SELECT COUNT(*) FROM {DB}.FILE_BATCH_DETAIL D
+                   INNER JOIN {DB}.FILE_BATCH_FOLDER F ON D.FOLDER_ID = F.FOLDER_ID
+                   WHERE  F.HEADER_ID = {header_id}),
+               UPDATED_BY        = '{user}',
+               UPDATED_DATE      = CURRENT_TIMESTAMP()
+        WHERE  HEADER_ID = {header_id}
+    """)
+
+
+# ── approve ───────────────────────────────────────────────────────────────────
+
 def approve_all(folder_id: int, header_id: int, user: str):
     execute(f"""
         UPDATE {DB}.FILE_BATCH_DETAIL
         SET    APPROVAL_STATUS = 'APPROVED',
-               APPROVED_BY    = '{user}',
-               APPROVED_DATE  = CURRENT_TIMESTAMP(),
-               UPDATED_DATE   = CURRENT_TIMESTAMP()
-        WHERE  FOLDER_ID       = {folder_id}
-          AND  APPROVAL_STATUS = 'PENDING'
-          AND  FILE_STATUS    != 'AUTO_REJECTED'
+               FILE_STATUS     = 'APPROVED',
+               APPROVED_BY     = '{user}',
+               APPROVED_DATE   = CURRENT_TIMESTAMP(),
+               UPDATED_BY      = '{user}',
+               UPDATED_DATE    = CURRENT_TIMESTAMP()
+        WHERE  FOLDER_ID = {folder_id}
+          AND  APPROVAL_STATUS NOT IN ('APPROVED', 'REJECTED')
+          AND  FILE_STATUS != 'AUTO_REJECTED'
     """)
+    _refresh_folder(folder_id, 'APPROVED', header_id, user)
 
+
+def approve_files(detail_ids: list, folder_id: int, header_id: int, user: str):
+    ids = ", ".join(str(i) for i in detail_ids)
+    execute(f"""
+        UPDATE {DB}.FILE_BATCH_DETAIL
+        SET    APPROVAL_STATUS = 'APPROVED',
+               FILE_STATUS     = 'APPROVED',
+               APPROVED_BY     = '{user}',
+               APPROVED_DATE   = CURRENT_TIMESTAMP(),
+               UPDATED_BY      = '{user}',
+               UPDATED_DATE    = CURRENT_TIMESTAMP()
+        WHERE  DETAIL_ID IN ({ids})
+          AND  FILE_STATUS != 'AUTO_REJECTED'
+    """)
+    _refresh_folder(folder_id, 'IN_REVIEW', header_id, user)
+
+
+# ── reject ────────────────────────────────────────────────────────────────────
 
 def reject_all(folder_id: int, header_id: int, user: str, reason: str):
     reason = (reason or "Bulk rejected by SME").replace("'", "''")
     execute(f"""
         UPDATE {DB}.FILE_BATCH_DETAIL
-        SET    APPROVAL_STATUS = 'REJECTED',
-               UPDATED_DATE   = CURRENT_TIMESTAMP()
-        WHERE  FOLDER_ID       = {folder_id}
-          AND  APPROVAL_STATUS = 'PENDING'
-          AND  FILE_STATUS    != 'AUTO_REJECTED'
+        SET    APPROVAL_STATUS   = 'REJECTED',
+               FILE_STATUS       = 'REJECTED',
+               INGESTION_STATUS  = 'NOT_REQUIRED',
+               REJECTED_BY       = '{user}',
+               REJECTED_DATE     = CURRENT_TIMESTAMP(),
+               REJECTION_REASON  = '{reason}',
+               UPDATED_BY        = '{user}',
+               UPDATED_DATE      = CURRENT_TIMESTAMP()
+        WHERE  FOLDER_ID = {folder_id}
+          AND  APPROVAL_STATUS NOT IN ('APPROVED', 'REJECTED')
+          AND  FILE_STATUS != 'AUTO_REJECTED'
     """)
+    _refresh_folder(folder_id, 'REJECTED', header_id, user)
 
+
+def reject_files(detail_ids: list, folder_id: int, header_id: int,
+                 user: str, reason: str):
+    ids    = ", ".join(str(i) for i in detail_ids)
+    reason = (reason or "Rejected by SME").replace("'", "''")
+    execute(f"""
+        UPDATE {DB}.FILE_BATCH_DETAIL
+        SET    APPROVAL_STATUS   = 'REJECTED',
+               FILE_STATUS       = 'REJECTED',
+               INGESTION_STATUS  = 'NOT_REQUIRED',
+               REJECTED_BY       = '{user}',
+               REJECTED_DATE     = CURRENT_TIMESTAMP(),
+               REJECTION_REASON  = '{reason}',
+               UPDATED_BY        = '{user}',
+               UPDATED_DATE      = CURRENT_TIMESTAMP()
+        WHERE  DETAIL_ID IN ({ids})
+          AND  FILE_STATUS != 'AUTO_REJECTED'
+    """)
+    _refresh_folder(folder_id, 'IN_REVIEW', header_id, user)
+
+
+# ── rename & approve ──────────────────────────────────────────────────────────
 
 def rename_and_approve(detail_id: int, new_name: str, folder_id: int,
-                        header_id: int, user: str):
+                       header_id: int, user: str):
     safe_name = new_name.replace("'", "''")
     execute(f"""
         UPDATE {DB}.FILE_BATCH_DETAIL
         SET    CURRENT_FILE_NAME = '{safe_name}',
-               RENAME_STATUS     = 'COMPLETED',
-               RENAMED_BY        = '{user}',
-               RENAMED_DATE      = CURRENT_TIMESTAMP(),
                APPROVAL_STATUS   = 'APPROVED',
+               RENAME_STATUS     = 'READY',
                APPROVED_BY       = '{user}',
                APPROVED_DATE     = CURRENT_TIMESTAMP(),
+               UPDATED_BY        = '{user}',
                UPDATED_DATE      = CURRENT_TIMESTAMP()
         WHERE  DETAIL_ID = {detail_id}
+    """)
+    _refresh_folder(folder_id, 'IN_REVIEW', header_id, user)
+
+
+# ── activity log ──────────────────────────────────────────────────────────────
+
+def log_action(header_id: int, folder_id: int, detail_id,
+               activity_type: str, status: str, message: str, user: str):
+    h = str(header_id)
+    f = str(folder_id)
+    d = "NULL" if detail_id is None else str(detail_id)
+    execute(f"""
+        INSERT INTO {DB}.FILE_ACTIVITY_LOG
+            (HEADER_ID, FOLDER_ID, DETAIL_ID,
+             PROCESS_NAME, ACTIVITY_TYPE, ACTIVITY_STATUS,
+             ACTIVITY_MESSAGE, EXECUTED_BY)
+        VALUES ({h}, {f}, {d},
+                'STREAMLIT', '{activity_type}', '{status}',
+                $${message}$$, '{user}')
     """)
 
 
 def get_activity_log(folder_id: int) -> pd.DataFrame:
     return sql(f"""
         SELECT l.ACTIVITY_ID,
-               d.ORIGINAL_FILE_NAME  AS FILE_NAME,
+               d.ORIGINAL_FILE_NAME AS FILE_NAME,
                l.PROCESS_NAME,
                l.ACTIVITY_TYPE,
                l.ACTIVITY_STATUS,
