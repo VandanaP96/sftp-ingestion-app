@@ -5,7 +5,7 @@ Database : MEDUIT_DEX | Schema : SFTP_INGESTION
 """
 
 import streamlit as st
-from services.snowflake_services import (
+from services.snowflake_service import (
     get_clients, get_folders, get_files,
     get_approval_counts, approve_all, reject_all,
     rename_and_approve, get_activity_log
