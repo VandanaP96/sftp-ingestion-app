@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{7F3A1C2E-5B6D-4E8A-9C1F-2A3B4C5D6E7F}</ProjectGuid>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Meduit.ShareNormalizer</RootNamespace>
+    <AssemblyName>ShareNormalizer</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <Deterministic>true</Deterministic>
+    <LangVersion>7.3</LangVersion>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.Xml.Linq" />
+
+
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Classifier.cs" />
+    <Compile Include="Config.cs" />
+    <Compile Include="ConfigLoader.cs" />
+    <Compile Include="FileListCatalog.cs" />
+    <Compile Include="HashUtil.cs" />
+    <Compile Include="InventoryWriter.cs" />
+    <Compile Include="Logger.cs" />
+    <Compile Include="Program.cs" />
+    <Compile Include="Scanner.cs" />
+    <Compile Include="XlsxReader.cs" />
+
+    <Compile Include="Snowflake\Models\ActivityRecord.cs" />
+    <Compile Include="Snowflake\Models\BatchSummary.cs" />
+    <Compile Include="Snowflake\Models\DetailRecord.cs" />
+    <Compile Include="Snowflake\Models\FolderRecord.cs" />
+    <Compile Include="Snowflake\Models\HeaderRecord.cs" />  
+    <Compile Include="Snowflake\Models\InventoryContext.cs" />
+    <Compile Include="Snowflake\Models\RenameRecord.cs" />
+    <Compile Include="Snowflake\Models\SnowflakeConfig.cs" />
+    <Compile Include="Snowflake\Models\StageRecord.cs" />
+    <Compile Include="Snowflake\Models\RenameJob.cs" />
+    <Compile Include="Snowflake\Models\StageUploadJob.cs" />
+
+    <Compile Include="Snowflake\Mappers\RenameRecordMapper.cs" />
+    <Compile Include="Snowflake\Mappers\RenameJobMapper.cs" />
+    <Compile Include="Snowflake\Mappers\StageRecordMapper.cs" />
+    <Compile Include="Snowflake\Mappers\StageUploadJobMapper.cs" />
+
+    <Compile Include="Snowflake\Repository\HeaderRepository.cs" />
+    <Compile Include="Snowflake\Repository\FolderRepository.cs" />
+    <Compile Include="Snowflake\Repository\DetailRepository.cs" />
+    <Compile Include="Snowflake\Repository\ActivityRepository.cs" />
+
+    <Compile Include="Snowflake\Helpers\FolderHashHelper.cs" />
+    <Compile Include="Snowflake\Helpers\PathHelper.cs" />
+    <Compile Include="Snowflake\Helpers\FileValidator.cs" />
+    <Compile Include="Snowflake\Helpers\FileDiscoveryHelper.cs" />
+    <Compile Include="Snowflake\Helpers\DatePatternValidator.cs" />
+    <Compile Include="Snowflake\Helpers\FileMovementHelper.cs" />
+
+
+    <Compile Include="Snowflake\Infrastructure\SnowflakeContext.cs" />
+    <Compile Include="Snowflake\Infrastructure\ProcessRunner.cs" />
+    <Compile Include="Snowflake\Infrastructure\SnowCliExecutor.cs" />
+    <Compile Include="Snowflake\Infrastructure\SnowflakeSqlBuilder.cs" />
+
+    <Compile Include="Snowflake\Services\InventoryService.cs" />
+    <Compile Include="Snowflake\Services\RenameService.cs" />
+    <Compile Include="Snowflake\Services\StageUploadService.cs" />
+    <Compile Include="Snowflake\Services\WorkflowResult.cs" />
+    <Compile Include="Snowflake\Services\WorkflowService.cs" />
+
+    <Compile Include="Snowflake\Constants\StatusConstants.cs" />
+
+    <Compile Include="Properties\AssemblyInfo.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="normalizer.conf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>
