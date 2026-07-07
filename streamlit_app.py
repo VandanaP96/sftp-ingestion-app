@@ -254,32 +254,38 @@ if not rename_files.empty:
     st.caption("Enter the corrected filename and click Rename & Approve. "
                "The .NET service will rename the file on disk once submitted.")
 
-    for _, row in rename_files.iterrows():
-        detail_id = int(row["DETAIL_ID"])
-        st.markdown(
-            f'<div class="rename-box">'
-            f'<div class="rename-lbl">⚠️ Original: {row["ORIGINAL_FILE_NAME"]}</div>',
-            unsafe_allow_html=True
-        )
-        new_name = st.text_input(
-            "Corrected filename",
-            value=row["CURRENT_FILE_NAME"],
-            key=f"rename_{detail_id}",
-        )
-        col1, _ = st.columns([2, 8])
-        with col1:
-            if st.button("Rename & Approve", key=f"btn_rename_{detail_id}", type="primary"):
-                if not new_name.strip():
-                    st.error("Please enter a valid filename.")
-                else:
-                    rename_and_approve(detail_id, new_name.strip(),
-                                       folder_id, header_id, user)
-                    log_action(header_id, folder_id, detail_id,
-                               "RENAME_REQUEST", "SUCCESS",
-                               f"Rename Approved. New name: {new_name.strip()}", user)
-                    st.success(f"✅ Rename submitted: `{new_name.strip()}`")
-                    st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
+    rename_display = rename_files[["DETAIL_ID", "ORIGINAL_FILE_NAME",
+                                    "CURRENT_FILE_NAME", "VALIDATION_MESSAGE"]].copy()
+    rename_display = rename_display.rename(columns={"CURRENT_FILE_NAME": "CORRECTED_FILE_NAME"})
+
+    edited_renames = st.data_editor(
+        rename_display,
+        column_config={
+            "DETAIL_ID":            st.column_config.NumberColumn("ID", width="small"),
+            "ORIGINAL_FILE_NAME":   st.column_config.TextColumn("Original Filename", width="large", disabled=True),
+            "CORRECTED_FILE_NAME":  st.column_config.TextColumn("Corrected Filename ✏️", width="large"),
+            "VALIDATION_MESSAGE":   st.column_config.TextColumn("Reason", width="medium", disabled=True),
+        },
+        use_container_width=True,
+        hide_index=True,
+        num_rows="fixed",
+        key=f"rename_tbl_{folder_id}",
+    )
+
+    if st.button("✅ Submit All Renames", type="primary"):
+        submitted = 0
+        for i, row in edited_renames.iterrows():
+            new_name = str(row["CORRECTED_FILE_NAME"]).strip()
+            detail_id = int(rename_files.loc[i, "DETAIL_ID"])
+            if new_name:
+                rename_and_approve(detail_id, new_name, folder_id, header_id, user)
+                log_action(header_id, folder_id, detail_id,
+                           "RENAME_REQUEST", "SUCCESS",
+                           f"Rename Approved. New name: {new_name}", user)
+                submitted += 1
+        if submitted:
+            st.success(f"✅ {submitted} file(s) renamed and approved.")
+            st.rerun()
 
 
 # ── Section 3: Auto-Rejected ──────────────────────────────────────────────────
