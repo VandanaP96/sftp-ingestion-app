@@ -155,7 +155,6 @@ st.markdown(
 if normal_files.empty:
     st.caption("No files pending review.")
 else:
-    # ── action radio (above table) ────────────────────────────────────────────
     st.markdown('<div class="action-label">Bulk Action</div>', unsafe_allow_html=True)
     action = st.radio(
         "",
@@ -165,12 +164,10 @@ else:
         key=f"action_{folder_id}",
     )
 
-    # ── build display dataframe with Select column ────────────────────────────
     display = normal_files[["DETAIL_ID", "CURRENT_FILE_NAME", "FILE_TYPE",
                              "FILE_SIZE_KB", "VALID_DATE_FLAG",
                              "VALIDATION_MESSAGE"]].copy()
 
-    # Auto-tick all if Approve or Reject selected
     if action in ["✅  Approve", "❌  Reject"]:
         display.insert(0, "Select", True)
     else:
@@ -179,12 +176,12 @@ else:
     edited = st.data_editor(
         display,
         column_config={
-            "Select":           st.column_config.CheckboxColumn("✔", width="small"),
-            "DETAIL_ID":        st.column_config.NumberColumn("ID", width="small"),
-            "CURRENT_FILE_NAME":st.column_config.TextColumn("File Name", width="large"),
-            "FILE_TYPE":        st.column_config.TextColumn("Type", width="medium"),
-            "FILE_SIZE_KB":     st.column_config.NumberColumn("Size (KB)", width="small"),
-            "VALID_DATE_FLAG":  st.column_config.TextColumn("Valid Date", width="small"),
+            "Select":            st.column_config.CheckboxColumn("✔", width="small"),
+            "DETAIL_ID":         st.column_config.NumberColumn("ID", width="small"),
+            "CURRENT_FILE_NAME": st.column_config.TextColumn("File Name", width="large"),
+            "FILE_TYPE":         st.column_config.TextColumn("Type", width="medium"),
+            "FILE_SIZE_KB":      st.column_config.NumberColumn("Size (KB)", width="small"),
+            "VALID_DATE_FLAG":   st.column_config.TextColumn("Valid Date", width="small"),
             "VALIDATION_MESSAGE":st.column_config.TextColumn("Validation", width="medium"),
         },
         use_container_width=True,
@@ -193,13 +190,11 @@ else:
         key=f"tbl_{folder_id}",
     )
 
-    # ── derive selected IDs ───────────────────────────────────────────────────
     selected_rows = edited[edited["Select"] == True]
     selected_ids  = normal_files.loc[selected_rows.index, "DETAIL_ID"].tolist()
     is_full_bulk  = len(selected_ids) == total_pending
 
     if selected_ids and action != "— Select action —":
-        # Show partial note if not all selected
         if not is_full_bulk:
             st.markdown(
                 f'<div class="partial-note">'
@@ -207,7 +202,6 @@ else:
                 unsafe_allow_html=True
             )
 
-    # ── confirm button ────────────────────────────────────────────────────────
     if action == "✅  Approve" and selected_ids:
         if st.button("Confirm Approve", type="primary"):
             if is_full_bulk:
@@ -251,20 +245,21 @@ if not rename_files.empty:
         f'<div class="tbl-header">⚠️ Rename Required — {len(rename_files)} files</div>',
         unsafe_allow_html=True
     )
-    st.caption("Enter the corrected filename and click Rename & Approve. "
-               "The .NET service will rename the file on disk once submitted.")
+    st.caption("Uncheck files you do not want to rename. Edit the corrected filename, then click Submit.")
 
     rename_display = rename_files[["DETAIL_ID", "ORIGINAL_FILE_NAME",
                                     "CURRENT_FILE_NAME", "VALIDATION_MESSAGE"]].copy()
+    rename_display.insert(0, "Select", True)  # all pre-checked
     rename_display = rename_display.rename(columns={"CURRENT_FILE_NAME": "CORRECTED_FILE_NAME"})
 
     edited_renames = st.data_editor(
         rename_display,
         column_config={
+            "Select":               st.column_config.CheckboxColumn("✔", width="small"),
             "DETAIL_ID":            st.column_config.NumberColumn("ID", width="small"),
-            "ORIGINAL_FILE_NAME":   st.column_config.TextColumn("Original Filename", width="large", disabled=True),
-            "CORRECTED_FILE_NAME":  st.column_config.TextColumn("Corrected Filename ✏️", width="large"),
-            "VALIDATION_MESSAGE":   st.column_config.TextColumn("Reason", width="medium", disabled=True),
+            "ORIGINAL_FILE_NAME":   st.column_config.TextColumn("Original Filename",     width="large",  disabled=True),
+            "CORRECTED_FILE_NAME":  st.column_config.TextColumn("Corrected Filename ✏️",  width="large"),
+            "VALIDATION_MESSAGE":   st.column_config.TextColumn("Reason",                width="medium", disabled=True),
         },
         use_container_width=True,
         hide_index=True,
@@ -272,10 +267,14 @@ if not rename_files.empty:
         key=f"rename_tbl_{folder_id}",
     )
 
-    if st.button("✅ Submit All Renames", type="primary"):
+    selected_renames = edited_renames[edited_renames["Select"] == True]
+    st.caption(f"{len(selected_renames)} of {len(rename_files)} file(s) selected for rename & approve.")
+
+    if st.button("✅ Submit Selected Renames", type="primary",
+                 disabled=len(selected_renames) == 0):
         submitted = 0
-        for i, row in edited_renames.iterrows():
-            new_name = str(row["CORRECTED_FILE_NAME"]).strip()
+        for i, row in selected_renames.iterrows():
+            new_name  = str(row["CORRECTED_FILE_NAME"]).strip()
             detail_id = int(rename_files.loc[i, "DETAIL_ID"])
             if new_name:
                 rename_and_approve(detail_id, new_name, folder_id, header_id, user)
