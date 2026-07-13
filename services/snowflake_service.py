@@ -21,12 +21,29 @@ def execute(query: str):
 # ── read ──────────────────────────────────────────────────────────────────────
 
 def get_clients() -> pd.DataFrame:
+    """Only return clients that are onboarded in CFG_CLIENT."""
     return sql(f"""
-        SELECT HEADER_ID, CLIENT_CODE, CLIENT_NAME
-        FROM   {DB}.FILE_BATCH_HEADER
-        WHERE  ACTIVE_FLAG = 'Y'
-        ORDER  BY CLIENT_NAME
+        SELECT h.HEADER_ID, h.CLIENT_CODE, h.CLIENT_NAME
+        FROM   {DB}.FILE_BATCH_HEADER h
+        INNER JOIN MEDUIT_DEX.DEX.CFG_CLIENT c
+               ON h.CLIENT_NAME = c.DISPLAY_NAME
+        WHERE  h.ACTIVE_FLAG = 'Y'
+        ORDER  BY h.CLIENT_NAME
     """)
+
+
+def is_fully_loaded(client_name: str) -> bool:
+    """
+    Returns True if the client has at least one COMPLETE record in CTL_LANDING_LOAD.
+    """
+    result = sql(f"""
+        SELECT COUNT(*) AS CNT
+        FROM   MEDUIT_DEX.DEX.CTL_LANDING_LOAD l
+        JOIN   MEDUIT_DEX.DEX.CFG_CLIENT c ON l.CLIENT_ID = c.CLIENT_ID
+        WHERE  c.DISPLAY_NAME = '{client_name}'
+          AND  l.STATUS       = 'COMPLETE'
+    """)
+    return int(result.iloc[0]["CNT"]) > 0
 
 
 def get_folders(header_id: int) -> pd.DataFrame:
