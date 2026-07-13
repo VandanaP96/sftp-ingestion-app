@@ -9,7 +9,7 @@ import pandas as pd
 from services.snowflake_service import (
     get_clients, get_folders, get_files, get_approval_counts,
     approve_all, approve_files, reject_all, reject_files,
-    rename_and_approve, log_action, get_activity_log
+    rename_and_approve, log_action, get_activity_log, is_fully_loaded
 )
 from utils.helpers import me
 
@@ -129,10 +129,20 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 # ── load files ────────────────────────────────────────────────────────────────
 
-all_files     = get_files(folder_id)
+all_files = get_files(folder_id)
 if all_files.empty:
     st.info("No files found for this client and folder.")
     st.stop()
+
+# ── onboarding load check ─────────────────────────────────────────────────────
+fully_loaded = is_fully_loaded(selected_client["CLIENT_NAME"])
+
+if not fully_loaded:
+    st.warning(
+        f"⚠️ **{selected_client['CLIENT_NAME']}** is onboarded but not fully loaded. "
+        f"Showing top 1 file only until loading is complete."
+    )
+    all_files = all_files.head(1)
 
 normal_files  = all_files[all_files["APPROVAL_STATUS"] == "PENDING"].reset_index(drop=True)
 rename_files  = all_files[all_files["APPROVAL_STATUS"] == "RENAME_REQUIRED"].reset_index(drop=True)
