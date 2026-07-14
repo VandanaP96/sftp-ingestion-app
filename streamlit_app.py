@@ -114,8 +114,7 @@ st.markdown(
     f'<span class="chip chip-pend">🔵 {counts.get("PENDING", 0)} Pending</span>'
     f'<span class="chip chip-appr">✅ {counts.get("APPROVED", 0)} Approved</span>'
     f'<span class="chip chip-rej">❌ {counts.get("REJECTED", 0)} Rejected</span>'
-    f'<span class="chip chip-ren">⚠️ {counts.get("RENAME_REQUIRED", 0)} Rename Required</span>'
-    f'<span class="chip chip-auto">🚫 {counts.get("AUTO_REJECTED", 0)} Auto-Rejected</span>',
+    f'<span class="chip chip-ren">⚠️ {counts.get("RENAME_REQUIRED", 0)} Rename Required</span>',
     unsafe_allow_html=True
 )
 
@@ -129,7 +128,7 @@ if all_files.empty:
     st.stop()
 
 # ── onboarding load check ─────────────────────────────────────────────────────
-fully_loaded = is_fully_loaded(selected_client["CLIENT_NAME"])
+fully_loaded = is_fully_loaded(selected_client["CLIENT_CODE"])
 
 if not fully_loaded:
     st.warning(
@@ -292,19 +291,19 @@ if not rename_files.empty:
             st.rerun()
 
 
-# ── Section 3: Auto-Rejected ──────────────────────────────────────────────────
+# # ── Section 3: Auto-Rejected ──────────────────────────────────────────────────
 
-if not auto_rej.empty:
-    st.markdown("<br>", unsafe_allow_html=True)
-    with st.expander(f"🚫 Auto-Rejected by Scanner — {len(auto_rej)} files (read only)"):
-        st.caption("Automatically rejected by the .NET scanner due to invalid date. No action available.")
-        st.dataframe(
-            auto_rej[["DETAIL_ID", "ORIGINAL_FILE_NAME", "FILE_TYPE",
-                       "VALID_DATE_FLAG", "VALIDATION_MESSAGE",
-                       "FILE_STATUS", "QUARANTINE_PATH"]],
-            use_container_width=True,
-            hide_index=True,
-        )
+# if not auto_rej.empty:
+#     st.markdown("<br>", unsafe_allow_html=True)
+#     with st.expander(f"🚫 Auto-Rejected by Scanner — {len(auto_rej)} files (read only)"):
+#         st.caption("Automatically rejected by the .NET scanner due to invalid date. No action available.")
+#         st.dataframe(
+#             auto_rej[["DETAIL_ID", "ORIGINAL_FILE_NAME", "FILE_TYPE",
+#                        "VALID_DATE_FLAG", "VALIDATION_MESSAGE",
+#                        "FILE_STATUS", "QUARANTINE_PATH"]],
+#             use_container_width=True,
+#             hide_index=True,
+#         )
 
 
 # ── Section 4: Already Actioned ───────────────────────────────────────────────

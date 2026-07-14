@@ -21,12 +21,11 @@ def execute(query: str):
 # ── read ──────────────────────────────────────────────────────────────────────
 
 def get_clients() -> pd.DataFrame:
-    """Only return clients that are onboarded in CFG_CLIENT."""
     return sql(f"""
         SELECT h.HEADER_ID, h.CLIENT_CODE, h.CLIENT_NAME
         FROM   {DB}.FILE_BATCH_HEADER h
         INNER JOIN MEDUIT_DEX.DEX.CFG_CLIENT c
-               ON h.CLIENT_NAME = c.DISPLAY_NAME
+               ON h.CLIENT_CODE = c.DISPLAY_NAME
         WHERE  h.ACTIVE_FLAG = 'Y'
         ORDER  BY h.CLIENT_NAME
     """)
