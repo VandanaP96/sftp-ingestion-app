@@ -1,9 +1,3 @@
-"""
-SFTP Ingestion - File Review Screen v2
-Streamlit in Snowflake | Schema v2 (3-status model)
-Database : MEDUIT_DEX | Schema : SFTP_INGESTION
-"""
-
 import streamlit as st
 import pandas as pd
 from services.snowflake_service import (
@@ -212,9 +206,10 @@ else:
                 unsafe_allow_html=True
             )
 
+    # ── THE FIX: only use folder-level bulk query when fully loaded AND all selected ──
     if action == "✅  Approve" and selected_ids:
         if st.button("Confirm Approve", type="primary"):
-            if is_full_bulk:
+            if is_full_bulk and fully_loaded:
                 approve_all(folder_id, header_id, user)
                 log_action(header_id, folder_id, None,
                            "APPROVAL", "SUCCESS", "Folder Approved", user)
@@ -233,7 +228,7 @@ else:
             key="reject_reason"
         )
         if st.button("Confirm Reject", type="secondary"):
-            if is_full_bulk:
+            if is_full_bulk and fully_loaded:
                 reject_all(folder_id, header_id, user, reason)
                 log_action(header_id, folder_id, None,
                            "REJECTION", "SUCCESS", "Folder Rejected", user)
@@ -259,7 +254,7 @@ if not rename_files.empty:
 
     rename_display = rename_files[["DETAIL_ID", "ORIGINAL_FILE_NAME",
                                     "CURRENT_FILE_NAME", "VALIDATION_MESSAGE"]].copy()
-    rename_display.insert(0, "Select", True)  # all pre-checked
+    rename_display.insert(0, "Select", True)
     rename_display = rename_display.rename(columns={"CURRENT_FILE_NAME": "CORRECTED_FILE_NAME"})
 
     edited_renames = st.data_editor(
