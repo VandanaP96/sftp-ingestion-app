@@ -87,16 +87,22 @@ namespace Meduit.ShareNormalizer
                         cfg,
                         log);
 
+                        
+
                 Scanner scanner =
                     new Scanner(
                         cfg,
                         log,
                         catalog);
 
+                        
+
                 WorkflowService workflow =
                     new WorkflowService(
                         cfg,
                         log);
+
+                       
 
                 if (cfg.LoopSeconds > 0)
                 {
@@ -107,6 +113,8 @@ namespace Meduit.ShareNormalizer
 
                     while (true)
                     {
+                        log.Log("DEBUG : About to call ExecuteWorkflow()");
+
                         ExecuteWorkflow(
                             scanner,
                             workflow,

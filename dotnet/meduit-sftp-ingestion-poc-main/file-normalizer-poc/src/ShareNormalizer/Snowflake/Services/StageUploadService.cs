@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading.Tasks;
 
 using Meduit.ShareNormalizer.Snowflake.Helpers;
 using Meduit.ShareNormalizer.Snowflake.Infrastructure;
@@ -21,15 +22,37 @@ namespace Meduit.ShareNormalizer.Snowflake.Services
 
         private readonly SnowflakeContext _context;
 
-        private readonly SnowCliExecutor _executor;
+        private readonly ISnowflakeExecutor _sqlExecutor;
+
+        private readonly ISnowflakeExecutor _stageExecutor;
 
         private readonly DetailRepository _detailRepository;
 
         private readonly ActivityRepository _activityRepository;
 
+        private readonly object _activityLock =
+            new object();
+
+        private readonly object _databaseLock =
+        new object();
+
+        private readonly ActivityBuffer _activityBuffer =
+            new ActivityBuffer();
+
+        private readonly object _statisticsLock =
+            new object();
+
+        private int _uploadedFiles;
+
+        private int _failedFiles;
+
+        private int _skippedFiles;
+
+        private DateTime _started;
+
         public StageUploadService(
-            Config config,
-            Logger logger)
+    Config config,
+    Logger logger)
         {
             _config = config;
 
@@ -41,24 +64,32 @@ namespace Meduit.ShareNormalizer.Snowflake.Services
                     logger);
 
             ProcessRunner runner =
-                new ProcessRunner(logger);
+                new ProcessRunner(
+                    config,
+                    logger);
 
-            _executor =
-                new SnowCliExecutor(
+            SnowflakeExecutorFactory factory =
+                new SnowflakeExecutorFactory(
                     _context,
                     runner,
                     logger);
 
+            _sqlExecutor =
+                factory.SqlExecutor;
+
+            _stageExecutor =
+                factory.StageExecutor;
+
             _detailRepository =
                 new DetailRepository(
                     _context,
-                    _executor,
+                    _sqlExecutor,
                     logger);
 
             _activityRepository =
                 new ActivityRepository(
                     _context,
-                    _executor,
+                    _sqlExecutor,
                     logger);
         }
 
@@ -69,129 +100,188 @@ namespace Meduit.ShareNormalizer.Snowflake.Services
         {
             LogServiceStart();
 
+            _started = DateTime.Now;
+
             List<StageUploadJob> jobs =
                 _detailRepository.GetStageUploadJobs();
 
             _logger.Log(
-                string.Format(
-                    "Pending Upload Jobs : {0}",
-                    jobs.Count));
+                "Pending Upload Jobs : "
+                + jobs.Count);
 
-            foreach (StageUploadJob job in jobs)
-            {
-                try
+            Parallel.ForEach(
+                jobs,
+                new ParallelOptions
                 {
-                    ProcessUpload(job);
-                }
-                catch (Exception ex)
-{
-    LogFailure(job, ex);
+                    MaxDegreeOfParallelism =
+                        _config.StageUploadThreads
+                },
+                job =>
+                {
+                    try
+                    {
+                        ProcessUpload(job);
+                    }
+                    catch (Exception ex)
+                    {
+                        LogFailure(job, ex);
 
-    ActivityRecord activity =
-        CreateActivity(
-            job.DetailId,
-            "UPLOAD",
-            "FAILED",
-            ex.Message);
+                        _detailRepository.UpdateError(
+                            job.DetailId,
+                            ex.Message);
 
-    _activityRepository.Insert(
-        activity);
-}
+                        lock (_activityLock)
+                        {
+                            _failedFiles++;
+
+                            _activityBuffer.Add(
+                                CreateActivity(
+                                    job.DetailId,
+                                    "UPLOAD",
+                                    "FAILED",
+                                    ex.Message));
+                        }
+                    }
+                });
+
+            List<ActivityRecord> activities =
+                _activityBuffer.Drain();
+
+            if (activities.Count > 0)
+            {
+                _activityRepository
+                    .InsertBatchTransaction(
+                        activities);
             }
 
             LogServiceCompleted();
         }
 
-                private void ProcessUpload(
+        private void ProcessUpload(
     StageUploadJob job)
-{
-    ValidateJob(job);
+        {
+            ValidateJob(job);
 
-    LogUploadJob(job);
+            LogUploadJob(job);
 
-    _logger.Log("");
+            _detailRepository.UpdateIngestionStart(
+    job.DetailId);
 
-    _logger.Log(
-        "Uploading : " +
-        job.CurrentFileName);
+            UploadToStage(job);
 
-    if (StageAlreadyContainsFile(job))
-{
-    _logger.Log(
-        "File already exists in Snowflake stage.");
+            string archiveFile =
+                MoveToArchive(job);
 
-    VerifyUpload(job);
-}
-else
-{
-    UploadToStage(job);
+            lock (_databaseLock)
+            {
+                _sqlExecutor.BeginTransaction();
 
-    VerifyUpload(job);
-}
+                try
+                {
+                    UpdateDatabase(
+                        job,
+                        archiveFile);
 
-    string archiveFile =
-        MoveToArchive(job);
+                    _activityBuffer.Add(
+                        CreateActivity(
+                            job.DetailId,
+                            "UPLOAD",
+                            "SUCCESS",
+                            "Upload completed"));
 
-    UpdateDatabase(
-        job,
-        archiveFile);
+                    _sqlExecutor.CommitTransaction();
+                }
+                catch
+                {
+                    _sqlExecutor.RollbackTransaction();
+                    throw;
+                }
+            }
 
-    ActivityRecord activity =
-        CreateActivity(
-            job.DetailId,
-            "UPLOAD",
-            "SUCCESS",
-            "Stage upload completed.");
+            System.Threading.Interlocked.Increment(
+                ref _uploadedFiles);
 
-    _activityRepository.Insert(
-        activity);
+            LogSuccess(job);
+        }
 
-    LogSuccess(job);
-}
-
-
-/// <summary>
-/// Determines whether the file already exists
-/// in the configured Snowflake stage.
-/// </summary>
-private bool StageAlreadyContainsFile(
+        private bool StageAlreadyContainsFile(
     StageUploadJob job)
-{
-    string stageFolder =
-        BuildStageFolder(job);
-
-    return
-        _executor.StageFileExists(
-            stageFolder,
-            job.CurrentFileName);
-}
+        {
+            // No longer used.
+            return false;
+        }
 
 
-                /// <summary>
+        /// <summary>
+        /// Determines whether the file already exists
+        /// in the configured Snowflake stage.
+        /// </summary>
+        //    private bool StageAlreadyContainsFile(
+        //StageUploadJob job)
+        //    {
+        //        string stageFolder =
+        //            BuildStageFolder(job);
+
+        //        return
+        //            _stageExecutor.StageFileExists(
+        //                stageFolder,
+        //                job.CurrentFileName);
+        //    }
+
+
+
+        /// <summary>
         /// Uploads one file into Snowflake stage.
         /// </summary>
         private void UploadToStage(
-            StageUploadJob job)
+    StageUploadJob job)
         {
-            _logger.Log(
-                "Uploading to Snowflake stage...");
+            const int maxRetry = 3;
 
-            string stageFolder =
-                BuildStageFolder(job);
+            Exception lastException = null;
 
-            bool uploaded =
-                _executor.PutFile(
-                    job.CurrentPath,
-                    stageFolder);
-
-            if (!uploaded)
+            for (int attempt = 1;
+                 attempt <= maxRetry;
+                 attempt++)
             {
-                throw new ApplicationException(
-                    "Snowflake PUT command failed.");
+                try
+                {
+                    _logger.Log(
+                        "Uploading to Snowflake Stage... Attempt "
+                        + attempt);
+
+                    string stageFolder =
+                        BuildStageFolder(job);
+
+                    bool uploaded =
+                        _stageExecutor.PutFile(
+                            job.CurrentPath,
+                            stageFolder);
+
+                    if (!uploaded)
+                    {
+                        throw new ApplicationException(
+                            "PUT returned FALSE.");
+                    }
+
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    lastException = ex;
+
+                    _logger.Log(
+                        "PUT failed. Retry "
+                        + attempt);
+
+                    if (attempt < maxRetry)
+                    {
+                        System.Threading.Thread.Sleep(2000);
+                    }
+                }
             }
 
-            _logger.Log(
-                "PUT completed successfully.");
+            throw lastException;
         }
 
         /// <summary>
@@ -199,31 +289,11 @@ private bool StageAlreadyContainsFile(
         /// inside the Snowflake stage.
         /// </summary>
         private void VerifyUpload(
-            StageUploadJob job)
+    StageUploadJob job)
         {
-            _logger.Log(
-                "Verifying stage upload...");
-
-            string stageFolder =
-                BuildStageFolder(job);
-
-            bool exists =
-                _executor.StageFileExists(
-                    stageFolder,
-                    job.CurrentFileName);
-
-            _logger.Log(
-                         "Checking stage folder : " +
-                          stageFolder);
-
-            if (!exists)
-            {
-                throw new ApplicationException(
-                    "Uploaded file not found inside Snowflake stage.");
-            }
-
-            _logger.Log(
-                "Stage verification successful.");
+            // Disabled.
+            // SnowCLI 3.x no longer supports the old
+            // stage list implementation used here.
         }
 
         /// <summary>
@@ -254,9 +324,17 @@ archiveFile =
         job.CurrentPath,
         archiveFile);
 
-            _logger.Log(
-                "Archived : " +
-                archiveFile);
+        if (!File.Exists(archiveFile))
+{
+    throw new ApplicationException(
+        "Archive verification failed.");
+}
+
+        _logger.Log(
+    "Archive completed.");
+
+_logger.Log(
+    archiveFile);    
 
             return archiveFile;
         }
@@ -267,20 +345,29 @@ archiveFile =
         private string BuildStageFolder(
             StageUploadJob job)
         {
-            string relativePath =
-                Path.GetDirectoryName(
-                    job.CurrentPath);
+            
 
-            relativePath =
-                relativePath.Replace(
-                    _config.NormalizedRoot,
-                    "");
+            string normalizedRoot =
+    Path.GetFullPath(
+        _config.NormalizedRoot);
 
-            relativePath =
-                relativePath
-                    .TrimStart('\\')
-                    .Replace("\\", "/");
+string currentFolder =
+    Path.GetFullPath(
+        Path.GetDirectoryName(
+            job.CurrentPath));
 
+string relativePath =
+    currentFolder.Substring(
+        normalizedRoot.Length);
+
+relativePath =
+    relativePath
+        .TrimStart('\\')
+        .Replace("\\", "/");
+
+            _logger.Log(
+    "Stage Folder = " + relativePath);
+    
             return relativePath;
         }
 
@@ -309,16 +396,16 @@ archiveFile =
         }
 
 
-                /// <summary>
+        /// <summary>
         /// Updates metadata after successful upload
         /// and archive.
         /// </summary>
         private void UpdateDatabase(
-            StageUploadJob job,
-            string archiveFile)
+    StageUploadJob job,
+    string archiveFile)
         {
             _logger.Log(
-                "Updating upload metadata...");
+                "Updating database...");
 
             bool updated =
                 _detailRepository.FinishUpload(
@@ -333,7 +420,7 @@ archiveFile =
             }
 
             _logger.Log(
-                "Metadata updated successfully.");
+                "Database updated.");
         }
 
         /// <summary>
@@ -345,11 +432,19 @@ archiveFile =
             string folder =
                 BuildStageFolder(job);
 
-            return string.Format(
+            string fullPath =
+    string.Format(
                 "@{0}/{1}/{2}",
                 _config.SnowflakeStage,
                 folder.Replace("\\", "/"),
                 job.CurrentFileName);
+
+                _logger.Log(
+    "Stage Full Path : "
+    + fullPath);
+
+return fullPath;
+
         }
 
         /// <summary>
@@ -426,32 +521,64 @@ archiveFile =
         /// Logs upload success.
         /// </summary>
         private void LogSuccess(
-            StageUploadJob job)
-        {
-            _logger.Log(
-                "Upload completed : " +
-                job.CurrentFileName);
-        }
+    StageUploadJob job)
+{
+    _logger.Log("");
+
+    _logger.Log(
+        "======================================");
+
+    _logger.Log(
+        "UPLOAD SUCCESS");
+
+    _logger.Log(
+        "DETAIL ID : "
+        + job.DetailId);
+
+    _logger.Log(
+        "FILE      : "
+        + job.CurrentFileName);
+
+    _logger.Log(
+        "ARCHIVED");
+
+    _logger.Log(
+        "======================================");
+}
 
         /// <summary>
         /// Logs upload failure.
         /// </summary>
         private void LogFailure(
-            StageUploadJob job,
-            Exception ex)
-        {
-            _logger.Log("");
+    StageUploadJob job,
+    Exception ex)
+{
+    _logger.Log("");
 
-            _logger.Log(
-                "Upload failed.");
+    _logger.Log(
+        "UPLOAD FAILED");
 
-            _logger.Log(
-                "DETAIL_ID : " +
-                job.DetailId);
+    _logger.Log(
+        "DETAIL ID : " +
+        job.DetailId);
 
-            _logger.Log(
-                ex.Message);
-        }
+    _logger.Log(
+        "FILE      : " +
+        job.CurrentFileName);
+
+    _logger.Log(
+        "ERROR     : " +
+        ex.Message);
+
+    if (ex.InnerException != null)
+    {
+        _logger.Log(
+            ex.InnerException.Message);
+    }
+
+    _logger.Log(
+        "======================================");
+}
 
         /// <summary>
         /// Validates upload job.
@@ -480,6 +607,12 @@ archiveFile =
                     job.CurrentPath);
             }
 
+            if (new FileInfo(job.CurrentPath).Length == 0)
+{
+    throw new ApplicationException(
+        "Cannot upload an empty file.");
+}
+
             if (string.IsNullOrWhiteSpace(
                 job.CurrentFileName))
             {
@@ -505,22 +638,51 @@ archiveFile =
                 "======================================");
         }
 
+        private void LogStatistics()
+{
+    _logger.Log("");
+
+    _logger.Log(
+        "Upload Statistics");
+
+    _logger.Log(
+        "Uploaded : "
+        + _uploadedFiles);
+
+    _logger.Log(
+        "Skipped  : "
+        + _skippedFiles);
+
+    _logger.Log(
+        "Failed   : "
+        + _failedFiles);
+}
+
         /// <summary>
         /// Service completed.
         /// </summary>
         private void LogServiceCompleted()
-        {
-            _logger.Log("");
+{
+    TimeSpan elapsed =
+        DateTime.Now - _started;
 
-            _logger.Log(
-                "======================================");
+    _logger.Log("");
 
-            _logger.Log(
-                "Stage Upload Service Completed");
+    _logger.Log("======================================");
 
-            _logger.Log(
-                "======================================");
-        }
+    _logger.Log("Stage Upload Service Completed");
+
+    _logger.Log("Uploaded Files : " +
+        _uploadedFiles);
+
+    _logger.Log("Failed Files   : " +
+        _failedFiles);
+
+    _logger.Log("Duration       : " +
+        elapsed);
+
+    _logger.Log("======================================");
+}
     }
 }
 

@@ -1,5 +1,6 @@
 using System;
 using System.Text;
+using System.Collections.Generic;
 using Meduit.ShareNormalizer.Snowflake.Models;
 
 namespace Meduit.ShareNormalizer.Snowflake.Infrastructure
@@ -500,6 +501,82 @@ namespace Meduit.ShareNormalizer.Snowflake.Infrastructure
     return sql.ToString();
 }
 
+public static string InsertDetailBatch(
+    SnowflakeConfig cfg,
+    IEnumerable<DetailRecord> records)
+{
+    StringBuilder sql =
+        new StringBuilder();
+
+    sql.Append(
+        "INSERT INTO ");
+
+    sql.Append(cfg.FullDetailTable);
+
+    sql.AppendLine();
+
+    sql.AppendLine("(");
+
+    sql.AppendLine(
+        "FOLDER_ID,");
+
+    sql.AppendLine(
+        "ORIGINAL_FILE_NAME,");
+
+    sql.AppendLine(
+        "CURRENT_FILE_NAME,");
+
+    sql.AppendLine(
+        "FILE_EXTENSION,");
+
+    sql.AppendLine(
+        "FILE_HASH");
+
+    sql.AppendLine(")");
+
+    sql.AppendLine("VALUES");
+
+    bool first = true;
+
+    foreach (DetailRecord r in records)
+    {
+        if (!first)
+        {
+            sql.AppendLine(",");
+        }
+
+        first = false;
+
+        sql.Append("(");
+
+        sql.Append(r.FolderId);
+
+        sql.Append(",");
+
+        sql.Append(Sql(r.OriginalFileName));
+
+        sql.Append(",");
+
+        sql.Append(Sql(r.CurrentFileName));
+
+        sql.Append(",");
+
+        sql.Append(Sql(r.FileExtension));
+
+        sql.Append(",");
+
+        sql.Append(Sql(r.FileHash));
+
+        sql.Append(")");
+    }
+
+    sql.Append(";");
+
+    return sql.ToString();
+}
+
+
+
         public static string GetDetailId(
     SnowflakeConfig cfg,
     long folderId,
@@ -526,6 +603,38 @@ namespace Meduit.ShareNormalizer.Snowflake.Infrastructure
     sql.Append(Sql(fileHash));
 
     sql.Append(" LIMIT 1;");
+
+    return sql.ToString();
+}
+
+public static string GetDetailIdsBatch(
+    SnowflakeConfig cfg,
+    IEnumerable<string> hashes)
+{
+    StringBuilder sql =
+        new StringBuilder();
+
+    sql.Append("SELECT DETAIL_ID,FILE_HASH ");
+
+    sql.Append("FROM ");
+
+    sql.Append(cfg.FullDetailTable);
+
+    sql.Append(" WHERE FILE_HASH IN (");
+
+    bool first=true;
+
+    foreach(string hash in hashes)
+    {
+        if(!first)
+            sql.Append(",");
+
+        first=false;
+
+        sql.Append(Sql(hash));
+    }
+
+    sql.Append(")");
 
     return sql.ToString();
 }
@@ -557,6 +666,37 @@ namespace Meduit.ShareNormalizer.Snowflake.Infrastructure
 
             return sql.ToString();
         }
+
+        public static string DetailExistsBatch(
+    SnowflakeConfig cfg,
+    IEnumerable<string> hashes)
+{
+    StringBuilder sql =
+        new StringBuilder();
+
+    sql.Append("SELECT FILE_HASH ");
+    sql.Append("FROM ");
+    sql.Append(cfg.FullDetailTable);
+    sql.Append(" WHERE FILE_HASH IN (");
+
+    bool first = true;
+
+    foreach (string hash in hashes)
+    {
+        if (!first)
+        {
+            sql.Append(",");
+        }
+
+        first = false;
+
+        sql.Append(Sql(hash));
+    }
+
+    sql.Append(")");
+
+    return sql.ToString();
+}
 
         public static string UpdateApprovalStatus(
             SnowflakeConfig cfg,
@@ -763,17 +903,34 @@ public static string GetStageUploadJobs(
 
     sql.Append(" WHERE ");
 
-    sql.Append("APPROVAL_STATUS='APPROVED' ");
+sql.Append("APPROVAL_STATUS='APPROVED' ");
 
-    sql.Append("AND ");
+sql.Append("AND (");
 
-    sql.Append("RENAME_STATUS='COMPLETED' ");
+sql.Append("RENAME_STATUS='NOT_REQUIRED' ");
 
-    sql.Append("AND ");
+sql.Append("OR ");
 
-    sql.Append("INGESTION_STATUS='NOT_STARTED' ");
+sql.Append("RENAME_STATUS='COMPLETED'");
 
-    sql.Append("ORDER BY DETAIL_ID;");
+sql.Append(") ");
+
+sql.Append("AND ");
+
+sql.Append("INGESTION_STATUS='NOT_STARTED' ");
+
+            sql.Append("AND (");
+
+            sql.Append("FILE_STATUS='READY_FOR_UPLOAD'");
+
+            sql.Append("OR ");
+
+            sql.Append("FILE_STATUS='APPROVED'");
+
+            sql.Append(") ");
+
+
+            sql.Append("ORDER BY DETAIL_ID;");
 
     return sql.ToString();
 }
@@ -891,7 +1048,9 @@ public static string FinishUpload(
 
     sql.Append("INGESTION_STATUS='COMPLETED',");
 
-    sql.Append("INGESTION_END_TIME=CURRENT_TIMESTAMP(),");
+            sql.Append("ARCHIVED_DATE=CURRENT_TIMESTAMP(),");
+
+            sql.Append("INGESTION_END_TIME=CURRENT_TIMESTAMP(),");
 
     sql.Append("UPDATED_DATE=CURRENT_TIMESTAMP()");
 
@@ -1095,6 +1254,8 @@ public static string FinishUpload(
 
             sql.Append(" SET ");
 
+            sql.Append(" INGESTION_STATUS='IN_PROGRESS', ");
+
             sql.Append("INGESTION_START_TIME=CURRENT_TIMESTAMP()");
 
             sql.Append(" WHERE DETAIL_ID=");
@@ -1280,15 +1441,32 @@ public static string FinishUpload(
 
         #region COMMON
 
-private static string Sql(string value)
-{
-    if (string.IsNullOrWhiteSpace(value))
-        return "NULL";
+        private static string Sql(string value)
+        {
+            if (value == null)
+                return "NULL";
 
-    return "'" + value.Replace("'", "''") + "'";
-}
+            return "'" +
+                   value
+                       .Replace("\\", "\\\\")
+                       .Replace("'", "''")
+                   + "'";
+        }
 
-private static string Sql(DateTime? value)
+        private static string NormalizeSqlString(string value)
+        {
+            if (value == null)
+                return "";
+
+            value = value.Replace("\r", "");
+            value = value.Replace("\n", "");
+
+            value = value.Replace("'", "''");
+
+            return value;
+        }
+
+        private static string Sql(DateTime? value)
 {
     if (!value.HasValue)
         return "NULL";

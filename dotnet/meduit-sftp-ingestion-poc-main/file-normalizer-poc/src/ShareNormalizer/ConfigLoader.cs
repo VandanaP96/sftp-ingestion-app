@@ -71,6 +71,46 @@ case "snowConnection":
     cfg.SnowConnection = val;
     break;
 
+                    case "snowflakeHost":
+                        cfg.snowflakeHost = val;
+                        break;
+
+                    case "snowflakeAccount":
+    cfg.SnowflakeAccount = val;
+    break;
+
+case "snowflakeUser":
+    cfg.SnowflakeUser = val;
+    break;
+
+case "snowflakeWarehouse":
+    cfg.SnowflakeWarehouse = val;
+    break;
+
+case "snowflakeRole":
+    cfg.SnowflakeRole = val;
+    break;
+
+case "snowflakeAuthenticator":
+    cfg.SnowflakeAuthenticator = val;
+    break;
+
+case "snowflakePrivateKeyFile":
+    cfg.SnowflakePrivateKeyFile = val;
+    break;
+
+case "stageUploadThreads":
+    int stageThreads;
+    if (int.TryParse(val, out stageThreads))
+        cfg.StageUploadThreads = stageThreads;
+    break;
+
+case "maxSnowCliProcesses":
+    int maxCli;
+    if (int.TryParse(val, out maxCli))
+        cfg.MaxSnowCliProcesses = maxCli;
+    break;    
+
                     case "snowflakeDatabase":
                         cfg.SnowflakeDatabase = val;
                         break;
@@ -110,6 +150,54 @@ case "snowConnection":
                     case "activityTable":
                         cfg.ActivityTable = val;
                         break;
+
+                
+
+                    case "scannerFolderThreads":
+    int sft;
+    if (int.TryParse(val, out sft))
+        cfg.ScannerFolderThreads = sft;
+    break;
+
+case "scannerFileThreads":
+    int sfile;
+    if (int.TryParse(val, out sfile))
+        cfg.ScannerFileThreads = sfile;
+    break;
+
+case "inventoryFolderThreads":
+    int inventoryThreads;
+    if (int.TryParse(val, out inventoryThreads))
+    {
+        cfg.InventoryFolderThreads = inventoryThreads;
+    }
+    break;
+
+case "snowCliThreads":
+    int snowThreads;
+    if (int.TryParse(val, out snowThreads))
+    {
+        cfg.SnowCliThreads = snowThreads;
+    }
+    break;    
+
+case "inventoryFileThreads":
+    int ifile;
+    if (int.TryParse(val, out ifile))
+        cfg.InventoryFileThreads = ifile;
+    break;
+
+case "renameThreads":
+    int rt;
+    if (int.TryParse(val, out rt))
+        cfg.RenameThreads = rt;
+    break;
+
+case "uploadThreads":
+    int ut;
+    if (int.TryParse(val, out ut))
+        cfg.UploadThreads = ut;
+    break;
                 }
             }
         }

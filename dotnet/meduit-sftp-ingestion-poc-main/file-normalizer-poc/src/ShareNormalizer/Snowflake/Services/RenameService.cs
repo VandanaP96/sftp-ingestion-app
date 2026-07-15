@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 
 using Meduit.ShareNormalizer.Snowflake.Helpers;
 using Meduit.ShareNormalizer.Snowflake.Infrastructure;
@@ -38,11 +40,20 @@ namespace Meduit.ShareNormalizer.Snowflake.Services
 
         private readonly SnowflakeContext _context;
 
-        private readonly SnowCliExecutor _executor;
+        //private readonly SnowCliExecutor _executor;
 
-        private readonly DetailRepository _detailRepository;
+        private readonly ISnowflakeExecutor _executor;
 
-        private readonly ActivityRepository _activityRepository;
+        private readonly SnowflakeRepositoryContext
+    _repository;
+
+        //private readonly object _fileMoveLock = new object();
+
+    private readonly ActivityBuffer _activityBuffer =
+    new ActivityBuffer();
+
+        private readonly object _activityLock =
+    new object();
 
         public RenameService(
             Config config,
@@ -58,25 +69,25 @@ namespace Meduit.ShareNormalizer.Snowflake.Services
                     logger);
 
             ProcessRunner runner =
-                new ProcessRunner(logger);
+    new ProcessRunner(
+        config,
+        logger);
 
-            _executor =
-                new SnowCliExecutor(
-                    _context,
-                    runner,
-                    logger);
+SnowflakeExecutorFactory factory =
+    new SnowflakeExecutorFactory(
+        _context,
+        runner,
+        logger);
 
-            _detailRepository =
-                new DetailRepository(
-                    _context,
-                    _executor,
-                    logger);
+_executor =
+    factory.SqlExecutor;
 
-            _activityRepository =
-                new ActivityRepository(
-                    _context,
-                    _executor,
-                    logger);
+            _repository =
+    new SnowflakeRepositoryContext(
+        _context,
+        _executor,
+        logger);
+        
         }
 
         /// <summary>
@@ -87,38 +98,61 @@ namespace Meduit.ShareNormalizer.Snowflake.Services
             LogServiceStart();
 
             List<RenameJob> jobs =
-                _detailRepository.GetRenameJobs();
+                _repository.Detail.GetRenameJobs();
+
+            _logger.Log(
+                "Rename Jobs Returned : "
+                + jobs.Count);
 
             _logger.Log(
                 string.Format(
                     "Rename jobs found : {0}",
                     jobs.Count));
 
-            foreach (RenameJob job in jobs)
-            {
-                try
-                {
-                    ProcessRenameJob(job);
-                }
-                catch (Exception ex)
-                {
-                    _logger.Log(
-                        "RENAME ERROR : " +
-                        ex.Message);
+            Parallel.ForEach(
 
-                    ActivityRecord activity =
-                        CreateActivity(
-                            job.DetailId,
-                            "RENAME",
-                            "FAILED",
-                            ex.Message);
+    jobs,
 
-                    _activityRepository.Insert(
-                        activity);
-                }
-            }
+    new ParallelOptions
+    {
+        MaxDegreeOfParallelism =
+            _config.RenameThreads
+    },
 
-            LogServiceCompleted();
+    job =>
+    {
+        try
+        {
+            ProcessRenameJob(job);
+        }
+        catch (Exception ex)
+        {
+            _logger.Log(
+                "RENAME ERROR : " +
+                ex.Message);
+
+            ActivityRecord activity =
+    CreateActivity(
+        job.DetailId,
+        "RENAME",
+        "FAILED",
+        ex.Message);
+
+_activityBuffer.Add(activity);
+        }
+    });
+
+            List<ActivityRecord> activities =
+    _activityBuffer.Drain();
+
+if (activities.Count > 0)
+{
+    _repository.Activity
+        .InsertBatchTransaction(
+            activities);
+}
+
+LogServiceCompleted();
         }
 
         /// <summary>
@@ -147,18 +181,14 @@ EnsureDestinationFolder(job);
                 normalizedFile);
 
             ActivityRecord activity =
-                CreateActivity(
-                    job.DetailId,
-                    "RENAME",
-                    "SUCCESS",
-                    "Rename completed successfully.");
+    CreateActivity(
+        job.DetailId,
+        "RENAME",
+        "SUCCESS",
+        "Rename completed successfully.");
 
-            _activityRepository.Insert(
-                activity);
+_activityBuffer.Add(activity);
 
-            _logger.Log(
-                "Completed : " +
-                job.CurrentFileName);
         }
 
         /// <summary>
@@ -240,9 +270,9 @@ EnsureDestinationFolder(job);
                 destinationFile);
 
             destinationFile =
-                FileMovementHelper.MoveFile(
-                    job.QuarantinePath,
-                    destinationFile);
+    FileMovementHelper.MoveFile(
+        job.QuarantinePath,
+        destinationFile);
 
             _logger.Log(
                 "File moved successfully.");
@@ -260,11 +290,13 @@ EnsureDestinationFolder(job);
             _logger.Log(
                 "Updating metadata...");
 
-            bool updated =
-                _detailRepository.FinishRename(
-                    job.DetailId,
-                    job.CurrentFileName,
-                    normalizedFile);
+            bool updated;
+
+updated =
+    _repository.Detail.FinishRename(
+        job.DetailId,
+        job.CurrentFileName,
+        normalizedFile);
 
             if (!updated)
             {
@@ -350,36 +382,7 @@ EnsureDestinationFolder(job);
                 "========================================");
         }
 
-        /// <summary>
-        /// Logs successful completion.
-        /// </summary>
-        private void LogSuccess(
-            RenameJob job)
-        {
-            _logger.Log(
-                "Rename completed for : " +
-                job.CurrentFileName);
-        }
-
-        /// <summary>
-        /// Logs rename failure.
-        /// </summary>
-        private void LogFailure(
-            RenameJob job,
-            Exception ex)
-        {
-            _logger.Log("");
-
-            _logger.Log(
-                "Rename failed.");
-
-            _logger.Log(
-                "DETAIL_ID : " +
-                job.DetailId);
-
-            _logger.Log(
-                ex.Message);
-        }
+        
 
                 /// <summary>
         /// Determines whether the rename job is still valid.

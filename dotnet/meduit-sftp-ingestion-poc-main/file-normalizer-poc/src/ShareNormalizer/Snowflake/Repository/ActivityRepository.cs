@@ -1,4 +1,7 @@
 using System;
+using System.Text;
+using System.Threading.Tasks;
+using System.Collections.Generic;
 
 using Meduit.ShareNormalizer.Snowflake.Infrastructure;
 using Meduit.ShareNormalizer.Snowflake.Models;
@@ -8,21 +11,19 @@ namespace Meduit.ShareNormalizer.Snowflake.Repository
     /// <summary>
     /// Repository responsible for FILE_ACTIVITY_LOG operations.
     /// </summary>
-    internal sealed class ActivityRepository
+    internal sealed class ActivityRepository : RepositoryBase
     {
-        private readonly SnowflakeContext _context;
-        private readonly SnowCliExecutor _executor;
-        private readonly Logger _logger;
 
         public ActivityRepository(
-            SnowflakeContext context,
-            SnowCliExecutor executor,
-            Logger logger)
-        {
-            _context = context;
-            _executor = executor;
-            _logger = logger;
-        }
+    SnowflakeContext context,
+    ISnowflakeExecutor executor,
+    Logger logger)
+    : base(
+        context,
+        executor,
+        logger)
+{
+}
 
         /// <summary>
         /// Inserts a processing activity.
@@ -31,17 +32,11 @@ namespace Meduit.ShareNormalizer.Snowflake.Repository
             ActivityRecord record)
         {
             string sql =
-                SnowflakeSqlBuilder.InsertActivity(
-                    _context.Config,
-                    record);
+    SnowflakeSqlBuilder.InsertActivity(
+        Context.Config,
+        record);
 
-            _logger.Log(
-                "ACTIVITY   " +
-                record.ActivityType +
-                " : " +
-                record.ActivityStatus);
-
-            return _executor.ExecuteSql(sql);
+return Executor.ExecuteSql(sql);
         }
 
         /// <summary>
@@ -53,12 +48,107 @@ namespace Meduit.ShareNormalizer.Snowflake.Repository
         {
             string sql =
                 SnowflakeSqlBuilder.UpdateActivityStatus(
-                    _context.Config,
+                    Context.Config,
                     activityId,
                     status);
 
-            return _executor.ExecuteSql(sql);
+            return Executor.ExecuteSql(sql);
         }
+
+        public void InsertBatch(
+    IEnumerable<ActivityRecord> activities)
+{
+    List<ActivityRecord> list =
+        new List<ActivityRecord>(activities);
+
+    if (list.Count == 0)
+    {
+        return;
+    }
+
+    Executor.BeginTransaction();
+
+    try
+    {
+        foreach (ActivityRecord activity in list)
+        {
+            Insert(activity);
+        }
+
+        Executor.CommitTransaction();
+    }
+    catch
+    {
+        Executor.RollbackTransaction();
+
+        throw;
+    }
+}
+
+public void InsertBatchTransaction(
+    IEnumerable<ActivityRecord> activities)
+{
+    List<ActivityRecord> activityList =
+        new List<ActivityRecord>(activities);
+
+    if (activityList.Count == 0)
+        return;
+
+    Logger.Log(
+        "Writing "
+        + activityList.Count
+        + " activity records...");
+
+    Executor.BeginTransaction();
+
+    try
+    {
+        foreach (ActivityRecord activity in activityList)
+        {
+            Insert(activity);
+        }
+
+        Executor.CommitTransaction();
+
+        Logger.Log(
+            "Activity batch committed.");
+    }
+    catch
+    {
+        Executor.RollbackTransaction();
+
+        throw;
+    }
+}
+
+
+public bool ExecuteBatchInsert(
+    IEnumerable<ActivityRecord> records)
+{
+    StringBuilder builder =
+        new StringBuilder();
+
+    bool first = true;
+
+    foreach (ActivityRecord activity in records)
+    {
+        if (!first)
+        {
+            builder.AppendLine(";");
+        }
+
+        builder.Append(
+            SnowflakeSqlBuilder.InsertActivity(
+                Context.Config,
+                activity));
+
+        first = false;
+    }
+
+    return
+        Executor.ExecuteSql(
+            builder.ToString());
+}
 
         /// <summary>
         /// Updates activity failure.
@@ -70,12 +160,26 @@ namespace Meduit.ShareNormalizer.Snowflake.Repository
         {
             string sql =
                 SnowflakeSqlBuilder.UpdateActivityError(
-                    _context.Config,
+                    Context.Config,
                     activityId,
                     errorCode,
                     errorMessage);
 
-            return _executor.ExecuteSql(sql);
+            return Executor.ExecuteSql(sql);
         }
+
+
+        private static List<ActivityRecord> ToList(
+    IEnumerable<ActivityRecord> activities)
+{
+    if (activities is List<ActivityRecord>)
+        return
+            (List<ActivityRecord>)activities;
+
+    return
+        new List<ActivityRecord>(
+            activities);
+}
+
     }
 }

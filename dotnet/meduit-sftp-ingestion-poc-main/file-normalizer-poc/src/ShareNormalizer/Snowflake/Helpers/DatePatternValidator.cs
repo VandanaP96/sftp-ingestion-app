@@ -1,3 +1,5 @@
+using System;
+using System.Globalization;
 using System.Text.RegularExpressions;
 
 namespace Meduit.ShareNormalizer.Snowflake.Helpers
@@ -50,9 +52,9 @@ namespace Meduit.ShareNormalizer.Snowflake.Helpers
             // Numeric Dates
             //---------------------------------------------------------
 
-            @"\b\d{8}\b",                        // YYYYMMDD / MMDDYYYY
+            @"(?<!\d)\d{8}(?!\d)",                        // YYYYMMDD / MMDDYYYY
 
-            @"\b\d{6}\b",                        // MMDDYY
+            @"(?<!\d)\d{6}(?!\d)",                        // MMDDYY
 
             @"\b\d{4}-\d{2}-\d{2}\b",            // YYYY-MM-DD
 
@@ -166,8 +168,8 @@ namespace Meduit.ShareNormalizer.Snowflake.Helpers
         };
 
         public static bool TryGetPattern(
-            string fileName,
-            out string matchedPattern)
+    string fileName,
+    out string matchedPattern)
         {
             matchedPattern = "";
 
@@ -176,14 +178,50 @@ namespace Meduit.ShareNormalizer.Snowflake.Helpers
 
             foreach (string pattern in Patterns)
             {
-                Match match = Regex.Match(
-                    fileName,
-                    pattern,
-                    RegexOptions.IgnoreCase);
+                Match match =
+                    Regex.Match(
+                        fileName,
+                        pattern,
+                        RegexOptions.IgnoreCase);
 
-                if (match.Success)
+                if (!match.Success)
+                    continue;
+
+                string value =
+                    match.Value;
+
+                DateTime dt;
+
+                if (DateTime.TryParseExact(
+                        value,
+                        new[]
+                        {
+                    "yyyyMMdd",
+                    "MMddyyyy",
+                    "MMddyy",
+                    "yyyy-MM-dd",
+                    "yyyy_MM_dd",
+                    "yyyy/MM/dd",
+                    "MM-dd-yyyy",
+                    "MM/dd/yyyy",
+                    "MM_dd_yyyy",
+                    "MM.dd.yyyy"
+                        },
+                        CultureInfo.InvariantCulture,
+                        DateTimeStyles.None,
+                        out dt))
                 {
-                    matchedPattern = match.Value;
+                    matchedPattern = value;
+                    return true;
+                }
+
+                // Month-name formats (April 2026, Jul2025, etc.)
+                if (Regex.IsMatch(
+                        value,
+                        "[A-Za-z]",
+                        RegexOptions.IgnoreCase))
+                {
+                    matchedPattern = value;
                     return true;
                 }
             }

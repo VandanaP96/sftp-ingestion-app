@@ -26,33 +26,47 @@ namespace Meduit.ShareNormalizer.Snowflake.Infrastructure
             Logger = logger;
 
             Config = new SnowflakeConfig
-            {
+{
+                Host = cfg.snowflakeHost,
+
+                Account = cfg.SnowflakeAccount,
+
+                User = cfg.SnowflakeUser,
+
+                Warehouse = cfg.SnowflakeWarehouse,
+
+                Role = cfg.SnowflakeRole,
+
+                Authenticator = cfg.SnowflakeAuthenticator,
+
+                PrivateKeyFile = cfg.SnowflakePrivateKeyFile,
+
                 Enabled = cfg.SnowflakeEnabled,
 
     SnowCliPath = cfg.SnowCliPath,
 
     SnowConnection = cfg.SnowConnection,
 
-                Database = cfg.SnowflakeDatabase,
+    Database = cfg.SnowflakeDatabase,
 
-                Schema = cfg.SnowflakeSchema,
+    Schema = cfg.SnowflakeSchema,
 
-                Stage = cfg.SnowflakeStage,
+    Stage = cfg.SnowflakeStage,
 
-                NormalizedRoot = cfg.NormalizedRoot,
+    NormalizedRoot = cfg.NormalizedRoot,
 
-                ArchiveRoot = cfg.ArchiveRoot,
+    ArchiveRoot = cfg.ArchiveRoot,
 
-                QuarantineRoot = cfg.QuarantineRoot,
+    QuarantineRoot = cfg.QuarantineRoot,
 
-                HeaderTable = cfg.HeaderTable,
+    HeaderTable = cfg.HeaderTable,
 
-                FolderTable = cfg.FolderTable,
+    FolderTable = cfg.FolderTable,
 
-                DetailTable = cfg.DetailTable,
+    DetailTable = cfg.DetailTable,
 
-                ActivityTable = cfg.ActivityTable
-            };
+    ActivityTable = cfg.ActivityTable
+};
         }
 
         /// <summary>
@@ -102,7 +116,6 @@ namespace Meduit.ShareNormalizer.Snowflake.Infrastructure
                 throw new InvalidOperationException(
                     "quarantineRoot is missing in normalizer.conf.");
 
-            Logger.Log("SNOW CLI  Configuration validated successfully.");
         }
 
         /// <summary>

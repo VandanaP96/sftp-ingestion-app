@@ -92,6 +92,60 @@ namespace Meduit.ShareNormalizer
         /// <summary>0 = run once and exit; &gt;0 = re-scan every N seconds.</summary>
         public int LoopSeconds = 0;
 
+        /// <summary>
+/// Maximum number of folders scanned simultaneously.
+/// </summary>
+public int ScannerFolderThreads = 4;
+
+public int InventoryThreads = 8;
+
+/// <summary>
+/// Maximum number of files processed simultaneously.
+/// </summary>
+public int ScannerFileThreads = 8;
+
+/// <summary>
+/// Inventory parallel folder processing.
+/// </summary>
+public int InventoryFolderThreads = 4;
+
+/// <summary>
+/// Inventory parallel file processing.
+/// </summary>
+public int InventoryFileThreads = 8;
+
+/// <summary>
+/// Rename jobs running simultaneously.
+/// </summary>
+public int RenameThreads = 4;
+
+        public string snowflakeHost = "";
+
+        public string SnowflakeAccount = "";
+
+public string SnowflakeUser = "";
+
+public string SnowflakeRole = "";
+
+public string SnowflakeWarehouse = "";
+
+public string SnowflakeAuthenticator = "SNOWFLAKE_JWT";
+
+public string SnowflakePrivateKeyFile = "";
+
+/// <summary>
+/// Upload jobs running simultaneously.
+/// </summary>
+public int UploadThreads = 4;
+
+public int StageUploadThreads = 4;
+
+/// <summary>
+/// Maximum number of SnowCLI processes that may execute simultaneously.
+/// </summary>
+public int SnowCliThreads = 4;
+
+
         #endregion
         
         #region SnowCLI Configuration
@@ -148,6 +202,8 @@ public string SnowConnection = "";
         /// Invalid files.
         /// </summary>
         public string QuarantineRoot = "";
+
+        public int MaxSnowCliProcesses = 8;
 
         /// <summary>
         /// Snowflake table names.

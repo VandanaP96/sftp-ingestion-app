@@ -1,6 +1,10 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
+using System.Web.Script.Serialization;
+
 
 namespace Meduit.ShareNormalizer.Snowflake.Infrastructure
 {
@@ -9,7 +13,7 @@ namespace Meduit.ShareNormalizer.Snowflake.Infrastructure
     /// This class is the single gateway between the application
     /// and Snowflake CLI.
     /// </summary>
-    internal sealed class SnowCliExecutor
+    internal sealed class SnowCliExecutor : ISnowflakeExecutor
     {
         private readonly SnowflakeContext _context;
 
@@ -34,72 +38,64 @@ namespace Meduit.ShareNormalizer.Snowflake.Infrastructure
         /// </summary>
         public bool TestConnection()
         {
-            _logger.Log("");
-            _logger.Log("SNOWCLI     Testing connection...");
-
             ProcessRunner.ProcessResult result =
                 _runner.Execute(
                     _context.Config.SnowCliPath,
                     "--version");
 
-            if (!result.Success)
-            {
-                _logger.Log(
-                    "SNOWCLI     Unable to execute Snowflake CLI.");
-
-                return false;
-            }
-
-            result =
-                ExecuteCliSql(
-                    "SELECT CURRENT_VERSION();");
-
-            if (!result.Success)
-            {
-                _logger.Log(
-                    "SNOWCLI     Connection test failed.");
-
-                _logger.Log(
-                    result.StandardError);
-
-                return false;
-            }
-
-            _logger.Log(
-                "SNOWCLI     Connection successful.");
-
-            return true;
+            return result.Success;
         }
 
         /// <summary>
         /// Executes INSERT/UPDATE/DELETE/MERGE.
         /// </summary>
-        public bool ExecuteSql(
-            string sql)
-        {
-            ProcessRunner.ProcessResult result =
-                ExecuteCliSql(sql);
-
-            return result.Success;
-        }
+        public bool ExecuteSql(string sql)
+{
+    throw new NotSupportedException(
+        "SQL execution is handled by SnowflakeConnectorExecutor.");
+}
 
         /// <summary>
         /// Executes a SELECT statement.
         /// </summary>
-        public string ExecuteQuery(
-            string sql)
-        {
-            ProcessRunner.ProcessResult result =
-                ExecuteCliSql(sql);
+        public string ExecuteQuery(string sql)
+{
+    throw new NotSupportedException(
+        "SQL execution is handled by SnowflakeConnectorExecutor.");
+}
 
-            if (!result.Success)
-            {
-                throw new Exception(
-                    result.StandardError);
-            }
+        /// <summary>
+/// Executes multiple SQL statements
+/// inside one SnowCLI session.
+/// </summary>
+public bool ExecuteBatch(
+    params string[] sqlStatements)
+{
+    throw new NotSupportedException(
+        "Batch SQL execution is handled by SnowflakeConnectorExecutor.");
+}
 
-            return result.StandardOutput;
-        }
+
+/// <summary>
+/// Executes SQL without expecting output.
+/// </summary>
+public bool ExecuteBatchNonQuery(
+    params string[] sqlStatements)
+{
+    throw new NotSupportedException(
+        "Batch SQL execution is handled by SnowflakeConnectorExecutor.");
+}
+
+
+/// <summary>
+/// Executes SQL transaction.
+/// </summary>
+public bool ExecuteTransaction(
+    params string[] sqlStatements)
+{
+    throw new NotSupportedException(
+        "Transactions are handled by SnowflakeConnectorExecutor.");
+}
 
         /// <summary>
 /// Executes a scalar query and returns the first data value.
@@ -107,78 +103,19 @@ namespace Meduit.ShareNormalizer.Snowflake.Infrastructure
 /// </summary>
 public string ExecuteScalar(string sql)
 {
-    string output = ExecuteQuery(sql);
-
-    if (string.IsNullOrWhiteSpace(output))
-        return "";
-
-    _logger.Log("SNOWCLI RAW OUTPUT");
-    _logger.Log(output);
-
-    string[] lines =
-        output.Split(
-            new[]
-            {
-                Environment.NewLine
-            },
-            StringSplitOptions.RemoveEmptyEntries);
-
-    bool firstPipeSeen = false;
-
-    foreach (string line in lines)
-    {
-        string value = line.Trim();
-
-        if (value.Length == 0)
-            continue;
-
-        if (value.StartsWith("SELECT"))
-            continue;
-
-        if (value.StartsWith("+"))
-            continue;
-
-        if (!value.StartsWith("|"))
-            continue;
-
-        // first |.....| is always column header
-        if (!firstPipeSeen)
-        {
-            firstPipeSeen = true;
-            continue;
-        }
-
-        // second |-----| separator
-        if (value.Contains("---"))
-            continue;
-
-        string cleaned =
-            value.Replace("|", "").Trim();
-
-        if (cleaned.Length == 0)
-            continue;
-
-        _logger.Log(
-            "SNOWCLI SCALAR = " +
-            cleaned);
-
-        return cleaned;
-    }
-
-    return "";
+    throw new NotSupportedException(
+        "Scalar queries are handled by SnowflakeConnectorExecutor.");
 }
 
         /// <summary>
         /// Executes a query and returns rows.
         /// </summary>
         public List<string[]> ExecuteQueryRows(
-            string sql)
-        {
-            string output =
-                ExecuteQuery(sql);
-
-            return ParseCliTable(output);
-        }
+    string sql)
+{
+    throw new NotSupportedException(
+        "Queries are handled by SnowflakeConnectorExecutor.");
+}
 
         /// <summary>
         /// Executes SQL using Snowflake CLI.
@@ -207,6 +144,7 @@ public string ExecuteScalar(string sql)
                 new StringBuilder();
 
             builder.Append("sql ");
+            builder.Append("--format JSON ");
 
             builder.Append("--connection ");
 
@@ -230,107 +168,126 @@ public string ExecuteScalar(string sql)
                 /// <summary>
         /// Parses Snowflake CLI table output into rows.
         /// </summary>
-        private List<string[]> ParseCliTable(
-            string output)
+        private List<string[]> ParseCliTable(string output)
+{
+    List<string[]> rows =
+        new List<string[]>();
+
+    if (string.IsNullOrWhiteSpace(output))
+        return rows;
+
+    JavaScriptSerializer serializer =
+        new JavaScriptSerializer();
+
+    object obj =
+        serializer.DeserializeObject(output);
+
+    object[] records =
+        obj as object[];
+
+    if (records == null)
+        return rows;
+
+    bool headerAdded = false;
+
+    foreach (Dictionary<string, object> record
+                in records)
+    {
+        if (!headerAdded)
         {
-            List<string[]> rows =
-                new List<string[]>();
+            rows.Add(
+                new List<string>(record.Keys)
+                    .ToArray());
 
-            if (string.IsNullOrWhiteSpace(output))
-                return rows;
-
-            string[] lines =
-                output.Split(
-                    new[]
-                    {
-                        Environment.NewLine
-                    },
-                    StringSplitOptions.RemoveEmptyEntries);
-
-            foreach (string line in lines)
-            {
-                string value =
-                    line.Trim();
-
-                if (string.IsNullOrWhiteSpace(value))
-                    continue;
-
-                // Skip command echo
-                if (value.StartsWith("SELECT ",
-                    StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                // Skip separator lines
-                if (value.StartsWith("+"))
-                    continue;
-
-                // Only table rows begin with |
-                if (!value.StartsWith("|"))
-                    continue;
-
-                string[] parts =
-                    value.Split('|');
-
-                List<string> columns =
-                    new List<string>();
-
-                for (int i = 1; i < parts.Length - 1; i++)
-                {
-                    columns.Add(
-                        parts[i].Trim());
-                }
-
-                if (columns.Count > 0)
-                {
-                    rows.Add(
-                        columns.ToArray());
-                }
-            }
-
-            return rows;
+            headerAdded = true;
         }
+
+        List<string> values =
+            new List<string>();
+
+        foreach (object value
+                    in record.Values)
+        {
+            values.Add(
+                value == null
+                    ? ""
+                    : value.ToString());
+        }
+
+        rows.Add(values.ToArray());
+    }
+
+    return rows;
+}
 
         /// <summary>
         /// Uploads a local file into the configured stage.
         /// </summary>
         public bool PutFile(
-            string localFile,
-            string stageFolder)
+    string localFile,
+    string stageFolder)
         {
             if (string.IsNullOrWhiteSpace(localFile))
-                throw new ArgumentNullException("localFile");
+                throw new ArgumentNullException(nameof(localFile));
+
+            if (!File.Exists(localFile))
+                throw new FileNotFoundException(
+                    "Upload file not found.",
+                    localFile);
 
             if (string.IsNullOrWhiteSpace(stageFolder))
-                throw new ArgumentNullException("stageFolder");
+                throw new ArgumentNullException(nameof(stageFolder));
 
-            string sql =
+            stageFolder =
+                stageFolder
+                    .Replace("\\", "/")
+                    .Trim('/');
+
+            string stagePath =
                 string.Format(
-                    "PUT 'file://{0}' @{1}/{2} AUTO_COMPRESS=FALSE OVERWRITE=TRUE;",
-                    localFile.Replace("\\", "/"),
+                    "@{0}/{1}",
                     _context.Config.Stage,
-                    stageFolder.Replace("\\", "/"));
+                    stageFolder);
+
+            string arguments =
+                string.Format(
+                    "stage copy --connection {0} \"{1}\" \"{2}\" --overwrite --no-auto-compress",
+                    _context.Config.SnowConnection,
+                    localFile,
+                    stagePath);
 
             _logger.Log("");
+            _logger.Log("=======================================");
+            _logger.Log("SNOWCLI UPLOAD");
+            _logger.Log("LOCAL FILE : " + localFile);
+            _logger.Log("STAGE PATH : " + stagePath);
+            _logger.Log("COMMAND    : snow " + arguments);
+            _logger.Log("=======================================");
 
-            _logger.Log(
-                "SNOWCLI     Uploading file");
+            ProcessRunner.ProcessResult result =
+                _runner.Execute(
+                    _context.Config.SnowCliPath,
+                    arguments);
 
-            _logger.Log(
-                localFile);
+            _logger.Log("");
+            _logger.Log("========== SNOWCLI OUTPUT ==========");
 
-            bool success =
-                ExecuteSql(sql);
+            if (!string.IsNullOrWhiteSpace(result.StandardOutput))
+                _logger.Log(result.StandardOutput);
 
-            if (!success)
+            if (!string.IsNullOrWhiteSpace(result.StandardError))
+                _logger.Log(result.StandardError);
+
+            _logger.Log("Exit Code : " + result.ExitCode);
+            _logger.Log("====================================");
+
+            if (!result.Success)
             {
-                _logger.Log(
-                    "SNOWCLI     Upload failed.");
-
-                return false;
+                throw new ApplicationException(
+                    string.IsNullOrWhiteSpace(result.StandardError)
+                        ? result.StandardOutput
+                        : result.StandardError);
             }
-
-            _logger.Log(
-                "SNOWCLI     Upload successful.");
 
             return true;
         }
@@ -339,30 +296,48 @@ public string ExecuteScalar(string sql)
         /// Executes LIST command on stage.
         /// </summary>
         public string ListStage(
-            string folder)
+    string folder)
         {
-            string sql =
+            string arguments =
                 string.Format(
-                    "LIST @{0}/{1};",
+                    "stage list --connection {0} @{1}/{2}",
+                    _context.Config.SnowConnection,
                     _context.Config.Stage,
                     folder.Replace("\\", "/"));
 
-            return ExecuteQuery(sql);
+            ProcessRunner.ProcessResult result =
+                _runner.Execute(
+                    _context.Config.SnowCliPath,
+                    arguments);
+
+            if (!result.Success)
+            {
+                throw new ApplicationException(
+                    result.StandardError);
+            }
+
+            return result.StandardOutput;
         }
 
         /// <summary>
         /// Removes a staged file.
         /// </summary>
         public bool RemoveStageFile(
-            string stageFile)
+    string stageFile)
         {
-            string sql =
+            string arguments =
                 string.Format(
-                    "REMOVE @{0}/{1};",
+                    "stage remove --connection {0} @{1}/{2}",
+                    _context.Config.SnowConnection,
                     _context.Config.Stage,
                     stageFile.Replace("\\", "/"));
 
-            return ExecuteSql(sql);
+            ProcessRunner.ProcessResult result =
+                _runner.Execute(
+                    _context.Config.SnowCliPath,
+                    arguments);
+
+            return result.Success;
         }
 
         /// <summary>
@@ -370,8 +345,8 @@ public string ExecuteScalar(string sql)
         /// inside the stage.
         /// </summary>
         public bool StageFileExists(
-            string stageFolder,
-            string fileName)
+    string stageFolder,
+    string fileName)
         {
             string output =
                 ListStage(stageFolder);
@@ -379,31 +354,18 @@ public string ExecuteScalar(string sql)
             if (string.IsNullOrWhiteSpace(output))
                 return false;
 
-            return
-                output.IndexOf(
-                    fileName,
-                    StringComparison.OrdinalIgnoreCase) >= 0;
+            return output.IndexOf(
+                fileName,
+                StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         /// <summary>
         /// Initializes database and schema.
         /// </summary>
         public bool InitializeSession()
-        {
-            StringBuilder sql =
-                new StringBuilder();
-
-            sql.Append("USE DATABASE ");
-            sql.Append(_context.Config.Database);
-            sql.Append(";");
-
-            sql.Append("USE SCHEMA ");
-            sql.Append(_context.Config.Schema);
-            sql.Append(";");
-
-            return ExecuteSql(
-                sql.ToString());
-        }
+{
+    return true;
+}
 
                 /// <summary>
         /// Executes any Snowflake CLI command directly.
@@ -495,5 +457,34 @@ public string ExecuteScalar(string sql)
                 .Replace("\\", "\\\\")
                 .Replace("\"", "\\\"");
         }
+
+        public void Dispose()
+{
+    // Nothing to dispose.
+}
+
+public void BeginTransaction()
+{
+    // SnowCLI executes one command at a time.
+    // Transactions are not supported.
+}
+
+public void CommitTransaction()
+{
+    // No transaction support for SnowCLI.
+}
+
+public void RollbackTransaction()
+{
+    // No transaction support for SnowCLI.
+}
+
+public HashSet<string> ExecuteHashSet(
+    string sql)
+{
+    throw new NotSupportedException(
+        "ExecuteHashSet is only supported by the .NET Snowflake connector.");
+}
+
     }
 }

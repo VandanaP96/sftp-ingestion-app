@@ -14,13 +14,23 @@ namespace Meduit.ShareNormalizer.Snowflake.Mappers
             if (rows == null)
                 return jobs;
 
-            if (rows.Count <= 1)
+            if (rows.Count == 0)
                 return jobs;
 
-            for (int i = 1; i < rows.Count; i++)
+            for (int i = 0; i < rows.Count; i++)
             {
                 string[] row =
                     rows[i];
+
+                if (row == null)
+{
+    continue;
+}
+
+if (row.Length < 6)
+{
+    continue;
+}
 
                 StageUploadJob job =
                     new StageUploadJob();
@@ -52,6 +62,9 @@ namespace Meduit.ShareNormalizer.Snowflake.Mappers
 
                 job.ArchivePath =
                     row[5];
+
+                System.Diagnostics.Debug.WriteLine(
+    "Mapped Upload Job : " + job.DetailId);
 
                 jobs.Add(job);
             }

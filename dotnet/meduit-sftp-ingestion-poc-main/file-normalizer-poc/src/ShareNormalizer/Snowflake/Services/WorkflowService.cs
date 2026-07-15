@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Threading.Tasks;
 
 using Meduit.ShareNormalizer.Snowflake.Infrastructure;
 
@@ -22,7 +23,13 @@ namespace Meduit.ShareNormalizer.Snowflake.Services
     {
         private readonly Config _config;
 
-        private readonly Logger _logger;
+private readonly Logger _logger;
+
+private readonly InventoryService _inventoryService;
+
+private readonly RenameService _renameService;
+
+private readonly StageUploadService _stageUploadService;
 
         public WorkflowService(
             Config config,
@@ -36,165 +43,120 @@ namespace Meduit.ShareNormalizer.Snowflake.Services
 
             _config = config;
             _logger = logger;
+
+            _logger.Log("Creating InventoryService...");
+
+            _inventoryService =
+    new InventoryService(
+        config,
+        logger);
+
+        _logger.Log("InventoryService created.");
+
+_logger.Log("Creating RenameService...");
+
+_renameService =
+    new RenameService(
+        config,
+        logger);
+
+        _logger.Log("RenameService created.");
+
+_logger.Log("Creating StageUploadService...");
+
+
+_stageUploadService =
+    new StageUploadService(
+        config,
+        logger);
+
+        _logger.Log("StageUploadService created.");
+        
         }
 
         /// <summary>
         /// Executes the complete workflow.
         /// </summary>
         public void Execute()
-        {
-            Stopwatch workflowWatch =
-                Stopwatch.StartNew();
+{
+    Stopwatch watch =
+        Stopwatch.StartNew();
 
-            LogWorkflowStart();
+    LogWorkflowStart();
 
-            ExecuteInventory();
+    RunService(
+        "Inventory",
+        RunInventory);
 
-            ExecuteRename();
+    RunService(
+        "Rename",
+        RunRename);
 
-            ExecuteStageUpload();
+    RunService(
+        "Stage Upload",
+        RunStageUpload);
 
-            workflowWatch.Stop();
+    watch.Stop();
 
-            LogWorkflowCompleted(
-                workflowWatch.Elapsed);
-        }
-
-        /// <summary>
-        /// Executes InventoryService.
-        /// </summary>
-        private void ExecuteInventory()
-        {
-            Stopwatch watch =
-                Stopwatch.StartNew();
-
-            try
-            {
-                _logger.Log("");
-                _logger.Log("--------------------------------------------------");
-                _logger.Log("STEP 1 : Inventory Service");
-                _logger.Log("--------------------------------------------------");
-
-                InventoryService service =
-                    new InventoryService(
-                        _config,
-                        _logger);
-
-                service.Execute();
-
-                watch.Stop();
-
-                _logger.Log("");
-
-                _logger.Log(
-                    string.Format(
-                        "Inventory completed in {0}",
-                        watch.Elapsed));
-            }
-            catch (Exception ex)
-            {
-                watch.Stop();
-
-                _logger.Log("");
-
-                _logger.Log(
-                    "Inventory Service Failed");
-
-                _logger.Log(
-                    ex.ToString());
-            }
-        }
-
-        /// <summary>
-        /// Executes RenameService.
-        /// </summary>
-        private void ExecuteRename()
-        {
-            Stopwatch watch =
-                Stopwatch.StartNew();
-
-            try
-            {
-                _logger.Log("");
-                _logger.Log("--------------------------------------------------");
-                _logger.Log("STEP 2 : Rename Service");
-                _logger.Log("--------------------------------------------------");
-
-                RenameService service =
-                    new RenameService(
-                        _config,
-                        _logger);
-
-                service.Execute();
-
-                watch.Stop();
-
-                _logger.Log("");
-
-                _logger.Log(
-                    string.Format(
-                        "Rename completed in {0}",
-                        watch.Elapsed));
-            }
-            catch (Exception ex)
-            {
-                watch.Stop();
-
-                _logger.Log("");
-
-                _logger.Log(
-                    "Rename Service Failed");
-
-                _logger.Log(
-                    ex.ToString());
-            }
-        }
+    LogWorkflowCompleted(
+        watch.Elapsed);
+}
 
 
-                /// <summary>
-        /// Executes StageUploadService.
-        /// </summary>
-        private void ExecuteStageUpload()
-        {
-            Stopwatch watch =
-                Stopwatch.StartNew();
+private void RunService(
+    string serviceName,
+    Action action)
+{
+    Stopwatch watch =
+        Stopwatch.StartNew();
 
-            try
-            {
-                _logger.Log("");
-                _logger.Log("--------------------------------------------------");
-                _logger.Log("STEP 3 : Stage Upload Service");
-                _logger.Log("--------------------------------------------------");
+    try
+    {
+        _logger.Log("");
+        _logger.Log("------------------------------------------");
+        _logger.Log(serviceName + " Started");
+        _logger.Log("------------------------------------------");
 
-                StageUploadService service =
-                    new StageUploadService(
-                        _config,
-                        _logger);
+        action();
 
-                service.Execute();
+        watch.Stop();
 
-                watch.Stop();
+        _logger.Log(
+            serviceName +
+            " Completed (" +
+            watch.Elapsed +
+            ")");
+    }
+    catch (Exception ex)
+    {
+        watch.Stop();
 
-                _logger.Log("");
+        _logger.Log(
+            serviceName +
+            " FAILED");
 
-                _logger.Log(
-                    string.Format(
-                        "Stage Upload completed in {0}",
-                        watch.Elapsed));
-            }
-            catch (Exception ex)
-            {
-                watch.Stop();
+        _logger.Log(
+            ex.ToString());
+    }
+}
 
-                _logger.Log("");
 
-                _logger.Log(
-                    "Stage Upload Service Failed");
+private void RunInventory()
+{
+    _inventoryService.Execute();
+}
 
-                _logger.Log(
-                    ex.ToString());
-            }
-        }
+private void RunRename()
+{
+    _renameService.Execute();
+}
+
+private void RunStageUpload()
+{
+    _stageUploadService.Execute();
+}
+
+        
 
         /// <summary>
         /// Logs workflow start.
@@ -202,11 +164,11 @@ namespace Meduit.ShareNormalizer.Snowflake.Services
         private void LogWorkflowStart()
         {
             _logger.Log("");
-            _logger.Log("==============================================================");
-            _logger.Log("        MEDUIT SFTP INGESTION WORKFLOW STARTED");
-            _logger.Log("==============================================================");
-            _logger.Log("Execution Time : " + DateTime.Now);
-            _logger.Log("");
+_logger.Log("==================================================");
+_logger.Log("MEDUIT INGESTION WORKFLOW STARTED");
+_logger.Log("==================================================");
+_logger.Log("Started : " + DateTime.Now);
+_logger.Log("");
         }
 
         /// <summary>
@@ -217,34 +179,17 @@ namespace Meduit.ShareNormalizer.Snowflake.Services
         {
             _logger.Log("");
 
-            _logger.Log("==============================================================");
-            _logger.Log("        MEDUIT SFTP INGESTION WORKFLOW COMPLETED");
-            _logger.Log("==============================================================");
+_logger.Log("==================================================");
+_logger.Log("MEDUIT INGESTION WORKFLOW COMPLETED");
+_logger.Log("==================================================");
 
-            _logger.Log("");
+_logger.Log("Duration : " + elapsed);
 
-            _logger.Log(
-                "Total Duration : " +
-                elapsed);
+_logger.Log("Completed : " + DateTime.Now);
 
-            _logger.Log(
-                "Completed At   : " +
-                DateTime.Now);
-
-            _logger.Log("");
-
-            _logger.Log("Workflow finished successfully.");
-
-            _logger.Log("==============================================================");
+_logger.Log("==================================================");
         }
 
-        /// <summary>
-        /// Writes a separator line.
-        /// </summary>
-        private void LogSeparator()
-        {
-            _logger.Log(
-                "--------------------------------------------------");
-        }
+        
     }
 }

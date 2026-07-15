@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading.Tasks;
+using System.Collections.Concurrent;
+using System.Threading;
 
 using Meduit.ShareNormalizer.Snowflake.Constants;
 using Meduit.ShareNormalizer.Snowflake.Helpers;
@@ -25,21 +28,28 @@ namespace Meduit.ShareNormalizer.Snowflake.Services
     /// </summary>
     internal sealed class InventoryService
     {
+
+        private readonly object _activityLock = new object();
+
+        private readonly ActivityBuffer _activityBuffer =
+    new ActivityBuffer();
+
+
+        private readonly ConcurrentDictionary<string, bool>
+    _duplicateCache =
+        new ConcurrentDictionary<string, bool>();
+
         private readonly Config _config;
 
         private readonly Logger _logger;
 
         private readonly SnowflakeContext _context;
 
-        private readonly SnowCliExecutor _executor;
+        //private readonly SnowCliExecutor _executor;
 
-        private readonly HeaderRepository _headerRepository;
+        private readonly ISnowflakeExecutor _executor;
 
-        private readonly FolderRepository _folderRepository;
-
-        private readonly DetailRepository _detailRepository;
-
-        private readonly ActivityRepository _activityRepository;
+        private readonly SnowflakeRepositoryContext _repository;
 
         private readonly FileDiscoveryHelper _discoveryHelper;
 
@@ -59,37 +69,24 @@ namespace Meduit.ShareNormalizer.Snowflake.Services
         logger);
 		
 		ProcessRunner runner =
-    new ProcessRunner(logger);
+    new ProcessRunner(
+        config,
+        logger);
 
-            _executor =
-                new SnowCliExecutor(
+SnowflakeExecutorFactory factory =
+    new SnowflakeExecutorFactory(
         _context,
         runner,
         logger);
 
-            _headerRepository =
-                new HeaderRepository(
-                    _context,
-                    _executor,
-                    logger);
+_executor =
+    factory.SqlExecutor;
 
-            _folderRepository =
-                new FolderRepository(
-                    _context,
-                    _executor,
-                    logger);
-
-            _detailRepository =
-                new DetailRepository(
-                    _context,
-                    _executor,
-                    logger);
-
-            _activityRepository =
-                new ActivityRepository(
-                    _context,
-                    _executor,
-                    logger);
+            _repository =
+    new SnowflakeRepositoryContext(
+        _context,
+        _executor,
+        logger);
 
             _discoveryHelper =
                 new FileDiscoveryHelper(config);
@@ -115,43 +112,96 @@ namespace Meduit.ShareNormalizer.Snowflake.Services
                 "Discovered folders : " +
                 folders.Count);
 
-            foreach (DiscoveredFolder folder in folders)
-            {
-                try
-                {
-                    ProcessFolder(folder);
-                }
-                catch (Exception ex)
-                {
-                    _logger.Log(
-                        "FOLDER ERROR : " +
-                        ex.Message);
-                }
-            }
+            System.Threading.Tasks.Parallel.ForEach(
+
+    folders,
+
+    new System.Threading.Tasks.ParallelOptions
+    {
+        MaxDegreeOfParallelism =
+            _config.InventoryFolderThreads
+    },
+
+    folder =>
+    {
+        try
+        {
+            ProcessFolder(folder);
+        }
+        catch (Exception ex)
+        {
+            _logger.Log("");
+
+            _logger.Log("========================================");
+
+            _logger.Log("FOLDER FAILED");
+
+            _logger.Log("========================================");
+
+            _logger.Log(
+                folder.ClientName);
+
+            _logger.Log(
+                folder.FolderPath);
+
+            _logger.Log(
+                ex.ToString());
+
+            throw;
+        }
+    });
+
+    List<ActivityRecord> activities =
+    _activityBuffer.Drain();
+
+if (activities.Count > 0)
+{
+    _repository.Activity
+        .InsertBatchTransaction(
+            activities);
+}
 
             _logger.Log("");
-            _logger.Log("Inventory Completed Successfully.");
+
+_logger.Log("======================================================");
+
+_logger.Log("Inventory completed.");
+
+_logger.Log("Folders Processed : " + folders.Count);
+
+_logger.Log("Activities Logged : " +
+    _activityBuffer.Count);
+
+_logger.Log("======================================================");
         }
 
         /// <summary>
         /// Processes one Year-Month folder.
         /// </summary>
         private void ProcessFolder(
-            DiscoveredFolder folder)
+    DiscoveredFolder folder)
         {
             InventoryContext context =
                 BuildContext(folder);
+
+            List<InventoryWorkItem> folderBuffer =
+                new List<InventoryWorkItem>();
 
             RegisterHeader(context);
 
             RegisterFolder(context);
 
-            RegisterFiles(context);
+            RegisterFiles(
+                context,
+                folderBuffer);
+
+            FlushDetailBuffer(
+                folderBuffer);
 
             LogFolderSummary(context);
         }
-		
-		private InventoryContext BuildContext(
+
+        private InventoryContext BuildContext(
     DiscoveredFolder folder)
 {
     InventoryContext context =
@@ -247,7 +297,7 @@ namespace Meduit.ShareNormalizer.Snowflake.Services
         context.CurrentUser;
 
     context.HeaderId =
-        _headerRepository.GetOrCreate(header);
+        _repository.Header.GetOrCreate(header);
 
     if (context.HeaderId <= 0)
         throw new ApplicationException(
@@ -273,7 +323,9 @@ namespace Meduit.ShareNormalizer.Snowflake.Services
 
     activity.DurationSeconds = 0;
 
-    _activityRepository.Insert(activity);
+    //_activityRepository.Insert(activity);
+
+    _activityBuffer.Add(activity);
 
     _logger.Log(
         "HEADER          ID : " +
@@ -310,7 +362,7 @@ namespace Meduit.ShareNormalizer.Snowflake.Services
         context.CurrentUser;
 
     context.FolderId =
-        _folderRepository.GetOrCreate(folder);
+        _repository.Folder.GetOrCreate(folder);
 
     if (context.FolderId <= 0)
         throw new ApplicationException(
@@ -337,93 +389,197 @@ namespace Meduit.ShareNormalizer.Snowflake.Services
     activity.ExecutedBy =
         context.CurrentUser;
 
-    _activityRepository.Insert(activity);
+    //_activityRepository.Insert(activity);
+
+    _activityBuffer.Add(activity);
 
     _logger.Log(
         "FOLDER          ID : " +
         context.FolderId);
 }
 
-private void ProcessSingleFile(
-    InventoryContext context,
-    FileInfo file)
-{
-    ValidationResult validation =
+        private void ProcessSingleFile(
+            InventoryContext context,
+            FileInfo file,
+            List<InventoryWorkItem> folderBuffer)
+        {
+    InventoryWorkItem work =
+        new InventoryWorkItem();
+
+    work.File =
+        file;
+
+    work.FileHash =
+        HashUtil.Sha256File(
+            file.FullName);
+
+    work.Validation =
         _validator.Validate(
             file.FullName);
 
-    DetailRecord detail = BuildDetailRecord(
-        context,
-        file,
-        validation);
+    work.Detail =
+        BuildDetailRecord(
+            context,
+            file,
+            work.Validation);
 
+    work.Detail.FileHash =
+        work.FileHash;
 
-    if (_detailRepository.Exists(
-            context.FolderId,
-            detail.FileHash))
+    bool exists;
+
+    if (!_duplicateCache.TryGetValue(
+            work.FileHash,
+            out exists))
+    {
+        exists = false;
+    }
+
+    work.AlreadyExists =
+        exists;
+
+    if (work.AlreadyExists)
     {
         _logger.Log(
-            "Duplicate file skipped : "
+            "Duplicate skipped : "
             + file.Name);
 
         return;
     }
 
-    if (!validation.IsValid)
+    if (!work.Validation.IsValid)
     {
         HandleAutoRejectedFile(
             context,
-            file,
-            detail,
-            validation);
+            work);
 
         return;
     }
 
-    HandleValidFile(
-        context,
-        file,
-        detail,
-        validation);
-}
+            HandleValidFile(
+            context,
+            work,
+            folderBuffer);
+        }
 
-            private void RegisterFiles(
-    InventoryContext context)
-{
+        private void RegisterFiles(
+     InventoryContext context,
+     List<InventoryWorkItem> folderBuffer)
+        {
     _logger.Log("");
     _logger.Log("Starting File Inventory...");
 
-    foreach (FileInfo file in context.Files)
+    Dictionary<string, bool> duplicateLookup =
+        _repository.Detail.ExistsBatch(
+            context.FolderId,
+            GetHashes(context.Files));
+
+    foreach (KeyValuePair<string, bool> item
+        in duplicateLookup)
     {
-        try
-        {
-            ProcessSingleFile(
-                context,
-                file);
-        }
-        catch (Exception ex)
-        {
-            context.FailedFiles++;
-
-            ActivityRecord activity =
-                CreateActivity(
-                    context,
-                    0,
-                    StatusConstants.ActivityType.Error,
-                    "FAILED",
-                    file.Name,
-                    ex.Message);
-
-            _activityRepository.Insert(activity);
-
-            _logger.Log(
-                "ERROR : " +
-                ex.Message);
-        }
+        _duplicateCache[item.Key] =
+            item.Value;
     }
+
+    Parallel.ForEach<FileInfo>(
+        context.Files,
+        new ParallelOptions
+        {
+            MaxDegreeOfParallelism =
+                Math.Max(
+                    2,
+                    _config.InventoryThreads)
+        },
+        file =>
+        {
+            try
+            {
+                ProcessSingleFile(
+    context,
+    file,
+    folderBuffer);
+            }
+            catch (Exception ex)
+            {
+                lock (_activityLock)
+                {
+                    context.FailedFiles++;
+                }
+
+                ActivityRecord activity =
+                    CreateActivity(
+                        context,
+                        0,
+                        StatusConstants.ActivityType.Error,
+                        "FAILED",
+                        file.Name,
+                        ex.ToString());
+
+                _activityBuffer.Add(activity);
+
+                _logger.Log(
+                    "FILE FAILED");
+
+                _logger.Log(file.FullName);
+
+                _logger.Log(ex.ToString());
+            }
+        });
+
+    FlushDetailBuffer(folderBuffer);
 }
 
-			
+        private void FlushDetailBuffer(
+            List<InventoryWorkItem> folderBuffer)
+        {
+            if (folderBuffer == null)
+                return;
+
+            if (folderBuffer.Count == 0)
+                return;
+
+            List<DetailRecord> details =
+                new List<DetailRecord>(folderBuffer.Count);
+
+            foreach (InventoryWorkItem work in folderBuffer)
+            {
+                details.Add(work.Detail);
+            }
+
+            _repository.Detail.InsertBatch(details);
+
+            foreach (InventoryWorkItem item in folderBuffer)
+            {
+                _duplicateCache[item.FileHash] = true;
+            }
+
+            _logger.Log(
+    "DETAIL BATCH INSERT SUCCESS : "
+    + details.Count
+    + " rows.");
+
+            folderBuffer.Clear();
+        }
+
+
+        private List<string> GetHashes(
+    List<FileInfo> files)
+        {
+            ConcurrentBag<string> hashes =
+                new ConcurrentBag<string>();
+
+            Parallel.ForEach(
+                files,
+                file =>
+                {
+                    hashes.Add(
+                        HashUtil.Sha256File(
+                            file.FullName));
+                });
+
+            return new List<string>(hashes);
+        }
+
         private DetailRecord BuildDetailRecord(
     InventoryContext context,
     FileInfo file,
@@ -469,9 +625,7 @@ private void ProcessSingleFile(
     detail.LastModified =
         file.LastWriteTime;
 
-    detail.FileHash =
-        HashUtil.Sha256File(
-            file.FullName);
+    detail.FileHash = "";
 
     detail.DatePattern =
         validation.DatePattern;
@@ -505,48 +659,39 @@ private void ProcessSingleFile(
     return detail;
 }
 
-private void HandleValidFile(
-    InventoryContext context,
-    FileInfo file,
-    DetailRecord detail,
-    ValidationResult validation)
-{
-    detail.FileStatus =
+        private void HandleValidFile(
+            InventoryContext context,
+            InventoryWorkItem work,
+            List<InventoryWorkItem> folderBuffer)
+        {
+    work.Detail.FileStatus =
         StatusConstants.FileStatus.New;
 
-    detail.ApprovalStatus =
+    work.Detail.ApprovalStatus =
         StatusConstants.ApprovalStatus.Pending;
 
-    detail.AutoRejectFlag = "N";
+    work.Detail.AutoRejectFlag =
+        "N";
 
-    detail.RenameRequiredFlag = "N";
+    work.Detail.RenameRequiredFlag =
+        "N";
 
-    detail.RenameStatus =
+    work.Detail.RenameStatus =
         StatusConstants.RenameStatus.NotRequired;
 
-    long detailId =
-        _detailRepository.Insert(detail);
+            lock (folderBuffer)
+            {
+                folderBuffer.Add(work);
 
-    if (detailId <= 0)
-        throw new ApplicationException(
-            "Unable to register file.");
+                _duplicateCache.TryAdd(
+    work.FileHash,
+    true);
+            }
 
-    context.SuccessfulFiles++;
-
-    ActivityRecord activity =
-        CreateActivity(
-            context,
-            detailId,
-            StatusConstants.ActivityType.Validation,
-            "SUCCESS",
-            file.Name,
-            "File registered.");
-
-    _activityRepository.Insert(activity);
-
-    _logger.Log(
-        "VALID : " +
-        file.Name);
+            lock (_activityLock)
+    {
+        context.SuccessfulFiles++;
+    }
 }
 
 private string MoveToQuarantine(
@@ -571,9 +716,6 @@ private string MoveToQuarantine(
         file.FullName,
         destination);
 
-    _logger.Log(
-        "Moved to Quarantine : "
-        + destination);
 
     return destination;
 }
@@ -622,62 +764,58 @@ private ActivityRecord CreateActivity(
 
 			private void HandleAutoRejectedFile(
     InventoryContext context,
-    FileInfo file,
-    DetailRecord detail,
-    ValidationResult validation)
+    InventoryWorkItem work)
 {
-    string quarantinePath = MoveToQuarantine(
-        context,
-        file);
-        
+    string quarantinePath =
+        MoveToQuarantine(
+            context,
+            work.File);
 
-    detail.CurrentPath =
+    work.Detail.CurrentPath =
         quarantinePath;
 
-    detail.QuarantinePath =
+    work.Detail.QuarantinePath =
         quarantinePath;
 
-    detail.FileStatus =
+    work.Detail.FileStatus =
         StatusConstants.FileStatus.AutoRejected;
 
-    detail.AutoRejectFlag = "Y";
+    work.Detail.AutoRejectFlag =
+        "Y";
 
-    detail.RenameRequiredFlag = "Y";
+    work.Detail.RenameRequiredFlag =
+        "Y";
 
-    detail.RenameStatus =
+    work.Detail.RenameStatus =
         StatusConstants.RenameStatus.NotRequired;
 
-    detail.ApprovalStatus =
+    work.Detail.ApprovalStatus =
         StatusConstants.ApprovalStatus.RenameRequired;
 
-    detail.ValidationMessage =
-        validation.Message;
+    work.Detail.ValidationMessage =
+        work.Validation.Message;
 
-    long detailId =
-        _detailRepository.Insert(detail);
+    _repository.Detail.Insert(
+        work.Detail);
 
-    if (detailId <= 0)
-        throw new ApplicationException(
-            "Unable to register rejected file.");
+    lock (_activityLock)
+    {
+        context.QuarantinedFiles++;
 
-    context.QuarantinedFiles++;
-
-    context.AutoRejectedFiles++;
+        context.AutoRejectedFiles++;
+    }
 
     ActivityRecord activity =
         CreateActivity(
             context,
-            detailId,
+            0,
             StatusConstants.ActivityType.AutoReject,
             "SUCCESS",
-            file.Name,
-            validation.Message);
+            work.File.Name,
+            work.Validation.Message);
 
-    _activityRepository.Insert(activity);
-
-    _logger.Log(
-        "AUTO REJECT : "
-        + file.Name);
+    _activityBuffer.Add(
+        activity);
 }
 
 
@@ -721,7 +859,15 @@ private void LogFolderSummary(
         "Failed              : " +
         context.FailedFiles);
 
-    _logger.Log("==========================================");
+            _logger.Log(
+            "Duplicate Files     : "
+            + (_duplicateCache.Count));
+
+            _logger.Log(
+                "Activity Buffered   : "
+                + _activityBuffer.Count);
+
+            _logger.Log("==========================================");
 }
 		
 	}

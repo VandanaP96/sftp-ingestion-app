@@ -13,7 +13,19 @@ namespace Meduit.ShareNormalizer.Snowflake.Models
         /// </summary>
         public bool Enabled { get; set; }
 
-    
+        public string Account { get; set; }
+
+        public string Host { get; set; }
+
+        public string User { get; set; }
+
+        public string Warehouse { get; set; }
+
+        public string Role { get; set; }
+
+        public string Authenticator { get; set; }
+
+        public string PrivateKeyFile { get; set; }
 
         public string SnowCliPath { get; set; }
 

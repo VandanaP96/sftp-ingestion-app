@@ -16,50 +16,29 @@ namespace Meduit.ShareNormalizer.Snowflake.Helpers
         /// Generates SHA256 hash using folder path and file metadata.
         /// </summary>
         public static string Generate(string folderPath)
-        {
-            if (!Directory.Exists(folderPath))
-                return string.Empty;
+{
+    if (string.IsNullOrWhiteSpace(folderPath))
+        return "";
 
-            StringBuilder builder = new StringBuilder();
+    folderPath =
+        folderPath
+            .Trim()
+            .ToUpperInvariant();
 
-            builder.Append(folderPath.ToUpperInvariant());
+    using (SHA256 sha = SHA256.Create())
+    {
+        byte[] hash =
+            sha.ComputeHash(
+                Encoding.UTF8.GetBytes(folderPath));
 
-            FileInfo[] files =
-                new DirectoryInfo(folderPath)
-                    .GetFiles("*", SearchOption.TopDirectoryOnly)
-                    .OrderBy(f => f.Name)
-                    .ToArray();
+        StringBuilder builder =
+            new StringBuilder();
 
-            foreach (FileInfo file in files)
-            {
-                builder.Append(file.Name);
+        foreach (byte b in hash)
+            builder.Append(b.ToString("x2"));
 
-                builder.Append("|");
-
-                builder.Append(file.Length);
-
-                builder.Append("|");
-
-                builder.Append(file.LastWriteTimeUtc.Ticks);
-
-                builder.Append("|");
-            }
-
-            using (SHA256 sha = SHA256.Create())
-            {
-                byte[] bytes =
-                    Encoding.UTF8.GetBytes(builder.ToString());
-
-                byte[] hash =
-                    sha.ComputeHash(bytes);
-
-                StringBuilder result = new StringBuilder();
-
-                foreach (byte b in hash)
-                    result.Append(b.ToString("x2"));
-
-                return result.ToString();
-            }
-        }
+        return builder.ToString();
+    }
+}
     }
 }

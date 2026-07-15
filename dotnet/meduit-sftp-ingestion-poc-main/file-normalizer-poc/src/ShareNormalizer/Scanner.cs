@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace Meduit.ShareNormalizer
 {
@@ -18,9 +20,70 @@ namespace Meduit.ShareNormalizer
     internal sealed class Scanner
     {
         private sealed class Counts
-        {
-            public int scanned, copied, dup, existed, inflight, old, excluded, nonInput, errors;
-        }
+{
+    public int scanned;
+
+    public int copied;
+
+    public int dup;
+
+    public int existed;
+
+    public int inflight;
+
+    public int old;
+
+    public int excluded;
+
+    public int nonInput;
+
+    public int errors;
+
+    public void IncrementScanned()
+    {
+        System.Threading.Interlocked.Increment(ref scanned);
+    }
+
+    public void IncrementCopied()
+    {
+        System.Threading.Interlocked.Increment(ref copied);
+    }
+
+    public void IncrementDuplicate()
+    {
+        System.Threading.Interlocked.Increment(ref dup);
+    }
+
+    public void IncrementExists()
+    {
+        System.Threading.Interlocked.Increment(ref existed);
+    }
+
+    public void IncrementInflight()
+    {
+        System.Threading.Interlocked.Increment(ref inflight);
+    }
+
+    public void IncrementOld()
+    {
+        System.Threading.Interlocked.Increment(ref old);
+    }
+
+    public void IncrementExcluded()
+    {
+        System.Threading.Interlocked.Increment(ref excluded);
+    }
+
+    public void IncrementNonInput()
+    {
+        System.Threading.Interlocked.Increment(ref nonInput);
+    }
+
+    public void IncrementErrors()
+    {
+        System.Threading.Interlocked.Increment(ref errors);
+    }
+}
 
         private readonly Config _cfg;
         private readonly Classifier _classifier;
@@ -29,7 +92,14 @@ namespace Meduit.ShareNormalizer
         private readonly string _organizedRoot;
         private readonly string _inventoryPath;
         private readonly string _seenPath;
-        private readonly HashSet<string> _seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        //private readonly HashSet<string> _seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        private readonly ConcurrentDictionary<string, byte> _seen =
+    new ConcurrentDictionary<string, byte>(
+        StringComparer.OrdinalIgnoreCase);
+
+        private readonly object _seenFileLock =
+    new object();
 
         public Scanner(Config cfg, Logger log, FileListCatalog catalog)
         {
@@ -44,42 +114,100 @@ namespace Meduit.ShareNormalizer
 
             Directory.CreateDirectory(_organizedRoot);
             if (File.Exists(_seenPath))
-                foreach (var h in File.ReadAllLines(_seenPath))
-                    if (!string.IsNullOrWhiteSpace(h)) _seen.Add(h.Trim());
+                foreach (string h in File.ReadAllLines(_seenPath))
+{
+    if (!string.IsNullOrWhiteSpace(h))
+    {
+        _seen.TryAdd(h.Trim(), 0);
+    }
+}
         }
 
         public void RunOnce()
-        {
-            _log.Log(string.Format("SCAN start  roots={0} dryRun={1} inputOnly={2} minYear={3}",
-                _cfg.Sources.Count, _cfg.DryRun, _cfg.InputCandidatesOnly,
-                _cfg.MinYear > 0 ? _cfg.MinYear.ToString() : "(off)"));
+{
+    _log.Log(
+        string.Format(
+            "SCAN start roots={0} dryRun={1} inputOnly={2} minYear={3}",
+            _cfg.Sources.Count,
+            _cfg.DryRun,
+            _cfg.InputCandidatesOnly,
+            _cfg.MinYear > 0
+                ? _cfg.MinYear.ToString()
+                : "(off)"));
 
-            var c = new Counts();
-            using (var inv = new InventoryWriter(_inventoryPath))
-                foreach (var source in _cfg.Sources)
-                    ScanSource(source, inv, c);
+    Counts counts =
+        new Counts();
 
-            _log.Log(string.Format("SCAN done   scanned={0} copied={1} dup={2} existed={3} skippedInflight={4} skippedOld={5} skippedExcluded={6} skippedNonInput={7} errors={8}",
-                c.scanned, c.copied, c.dup, c.existed, c.inflight, c.old, c.excluded, c.nonInput, c.errors));
-            _log.Log("INVENTORY   " + _inventoryPath);
-        }
+    using (InventoryWriter inventory =
+        new InventoryWriter(_inventoryPath))
+    {
+        Parallel.ForEach(
+            _cfg.Sources,
+
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism =
+                    _cfg.ScannerFolderThreads
+            },
+
+            source =>
+            {
+                ScanSource(
+                    source,
+                    inventory,
+                    counts);
+            });
+    }
+
+    _log.Log(
+        string.Format(
+        "SCAN done scanned={0} copied={1} dup={2} existed={3} skippedInflight={4} skippedOld={5} skippedExcluded={6} skippedNonInput={7} errors={8}",
+        counts.scanned,
+        counts.copied,
+        counts.dup,
+        counts.existed,
+        counts.inflight,
+        counts.old,
+        counts.excluded,
+        counts.nonInput,
+        counts.errors));
+}
 
         private void ScanSource(SourceSpec source, InventoryWriter inv, Counts c)
         {
             string src = Path.GetFullPath(source.Path).TrimEnd('\\', '/');
             _log.Log(string.Format("SCAN root   system={0,-7} '{1}'", source.System ?? "(auto)", src));
 
-            foreach (var path in SafeEnumerateFiles(src))
-            {
+            //ConcurrentBag<string> files = new ConcurrentBag<string>();
+
+            //    foreach (string file in SafeEnumerateFiles(src))
+            //    {   files.Add(file); }
+
+List<string> files =
+    SafeEnumerateFiles(src).ToList();
+
+Parallel.ForEach(
+
+    files,
+
+    new ParallelOptions
+    {
+        MaxDegreeOfParallelism =
+            _cfg.ScannerFileThreads
+    },
+
+    path =>
+    {
+            
                 FileInfo file;
-                try { file = new FileInfo(path); } catch { c.errors++; continue; }
+                try { file = new FileInfo(path); } catch { c.IncrementErrors(); return; }
 
                 string rel = path.Length > src.Length ? path.Substring(src.Length).TrimStart('\\', '/') : file.Name;
                 string[] segs = rel.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
                 string[] dirSegs = segs.Length > 1 ? segs.Take(segs.Length - 1).ToArray() : new string[0];
 
-                if (_classifier.ShouldSkip(dirSegs)) { c.inflight++; continue; }
-                c.scanned++;
+                if (_classifier.ShouldSkip(dirSegs)) { c.IncrementInflight(); return; }
+                c.IncrementScanned();
 
                 string system = source.System ?? _classifier.ResolveSystem(dirSegs);
                 string client = Classifier.SafeName(_classifier.ResolveClient(dirSegs));
@@ -90,7 +218,7 @@ namespace Meduit.ShareNormalizer
 //
 if (!_classifier.IsAllowedExtension(file.Name))
 {
-    c.excluded++;
+    c.IncrementExcluded();
 
     inv.WriteRow(
         system,
@@ -103,44 +231,27 @@ if (!_classifier.IsAllowedExtension(file.Name))
         null,
         "");
 
-    continue;
+    return;
 }
 
 //
 // Skip output files
 //
-if (_classifier.IsExcluded(file.Name))
-{
-    c.excluded++;
-
-    inv.WriteRow(
-        system,
-        client,
-        "",
-        "",
-        file,
-        kind,
-        "SKIPPED_EXCLUDED",
-        null,
-        "");
-
-    continue;
-}
 
                 // Exclusion: acknowledgment / message / output files we never copy (e.g. *.ack.txt, *.msg).
                 if (_classifier.IsExcluded(file.Name))
                 {
-                    c.excluded++;
+                    c.IncrementExcluded();
                     inv.WriteRow(system, client, "", "", file, kind, "SKIPPED_EXCLUDED", null, "");
-                    continue;
+                    return;
                 }
 
                 // Recency filter: drop anything older than MinYear (inventoried, not copied or hashed).
                 if (_cfg.MinYear > 0 && _classifier.ResolveYear(dirSegs, file.Name, file.LastWriteTime) < _cfg.MinYear)
                 {
-                    c.old++;
+                    c.IncrementOld();
                     inv.WriteRow(system, client, "", "", file, kind, "SKIPPED_OLD", null, "");
-                    continue;
+                    return;
                 }
 
                 string enable = "", clientCode = "";
@@ -148,32 +259,39 @@ if (_classifier.IsExcluded(file.Name))
 
                 string sha = null, normalized = "", action;
                 try { sha = HashUtil.Sha256File(path); }
-                catch { c.errors++; inv.WriteRow(system, client, enable, clientCode, file, kind, "ERROR_READ", null, ""); continue; }
+                catch { c.IncrementErrors(); inv.WriteRow(system, client, enable, clientCode, file, kind, "ERROR_READ", null, ""); return; }
 
                 // Duplicate content (same SHA-256 seen this run or a prior run): ignore entirely -
                 // not copied, and not written to the inventory. Still counted in the run summary.
-                if (_seen.Contains(sha)) { c.dup++; continue; }
+                if (!_seen.TryAdd(sha, 0)){ c.IncrementDuplicate(); return; }
 
-                if (_cfg.InputCandidatesOnly && kind != "INPUT_CANDIDATE") { action = "SKIPPED_NONINPUT"; c.nonInput++; }
+                if (_cfg.InputCandidatesOnly && kind != "INPUT_CANDIDATE") { action = "SKIPPED_NONINPUT"; c.IncrementNonInput(); }
                 else
                 {
                     string ym = _classifier.ResolveYearMonth(dirSegs, file.Name, file.LastWriteTime);
                     string destDir = Path.Combine(_organizedRoot, system, client, ym);
                     normalized = Path.Combine(destDir, file.Name);
-                    if (!_cfg.DryRun && File.Exists(normalized)) { action = "SKIPPED_EXISTS"; c.existed++; }
-                    else if (_cfg.DryRun) { action = "WOULD_COPY"; c.copied++; }
+                    if (!_cfg.DryRun && File.Exists(normalized)) { action = "SKIPPED_EXISTS"; c.IncrementExists(); }
+                    else if (_cfg.DryRun) { action = "WOULD_COPY"; c.IncrementCopied(); }
                     else
                     {
                         Directory.CreateDirectory(destDir);
                         File.Copy(path, normalized, overwrite: true);
-                        _seen.Add(sha);
-                        File.AppendAllText(_seenPath, sha + Environment.NewLine);
-                        action = "COPIED"; c.copied++;
+                        //_seen.TryAdd(sha, 0);
+                        lock (_seenFileLock)
+{
+    File.AppendAllText(
+        _seenPath,
+        sha + Environment.NewLine);
+}
+                        action = "COPIED"; c.IncrementCopied();
                     }
                 }
 
                 inv.WriteRow(system, client, enable, clientCode, file, kind, action, sha, normalized);
-            }
+            
+
+            });
         }
 
         // Manual recursion so a single unreadable folder (locked / denied) does not abort the scan.

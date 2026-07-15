@@ -1,25 +1,28 @@
 using System;
+using System.Collections.Concurrent;
 
 using Meduit.ShareNormalizer.Snowflake.Infrastructure;
 using Meduit.ShareNormalizer.Snowflake.Models;
 
 namespace Meduit.ShareNormalizer.Snowflake.Repository
 {
-    internal sealed class FolderRepository
+    internal sealed class FolderRepository : RepositoryBase
     {
-        private readonly SnowflakeContext _context;
-        private readonly SnowCliExecutor _executor;
-        private readonly Logger _logger;
+
+        private readonly ConcurrentDictionary<string,long>
+    _folderCache =
+        new ConcurrentDictionary<string,long>();
 
         public FolderRepository(
-            SnowflakeContext context,
-            SnowCliExecutor executor,
-            Logger logger)
-        {
-            _context = context;
-            _executor = executor;
-            _logger = logger;
-        }
+    SnowflakeContext context,
+    ISnowflakeExecutor executor,
+    Logger logger)
+    : base(
+        context,
+        executor,
+        logger)
+{
+}
 
         public bool Exists(
             long headerId,
@@ -27,12 +30,12 @@ namespace Meduit.ShareNormalizer.Snowflake.Repository
         {
             string sql =
                 SnowflakeSqlBuilder.FolderExists(
-                    _context.Config,
+                    Context.Config,
                     headerId,
                     folderHash);
 
             string result =
-                _executor.ExecuteScalar(sql);
+                Executor.ExecuteScalar(sql);
 
             return result == "1";
         }
@@ -42,14 +45,14 @@ namespace Meduit.ShareNormalizer.Snowflake.Repository
         {
             string sql =
                 SnowflakeSqlBuilder.InsertFolder(
-                    _context.Config,
+                    Context.Config,
                     record);
 
-            _logger.Log(
+            Logger.Log(
                 "FOLDER      Creating : " +
                 record.FolderPath);
 
-            return _executor.ExecuteSql(sql);
+            return Executor.ExecuteSql(sql);
         }
 
         public long GetFolderId(
@@ -58,12 +61,12 @@ namespace Meduit.ShareNormalizer.Snowflake.Repository
         {
             string sql =
                 SnowflakeSqlBuilder.GetFolderId(
-                    _context.Config,
+                    Context.Config,
                     headerId,
                     folderHash);
 
             string value =
-                _executor.ExecuteScalar(sql);
+                Executor.ExecuteScalar(sql);
 
             long id;
 
@@ -77,18 +80,47 @@ namespace Meduit.ShareNormalizer.Snowflake.Repository
         /// Creates folder if required and always returns FOLDER_ID.
         /// </summary>
         public long GetOrCreate(
-            FolderRecord record)
+    FolderRecord record)
         {
-            if (!Exists(
-                    record.HeaderId,
-                    record.FolderHash))
+            string key =
+                record.HeaderId +
+                "|" +
+                record.FolderHash;
+
+            long id;
+
+            if (_folderCache.TryGetValue(
+                    key,
+                    out id))
             {
-                Insert(record);
+                return id;
             }
 
-            return GetFolderId(
-                record.HeaderId,
-                record.FolderHash);
+            lock (_folderCache)
+            {
+                if (_folderCache.TryGetValue(
+                        key,
+                        out id))
+                {
+                    return id;
+                }
+
+                if (!Exists(
+                        record.HeaderId,
+                        record.FolderHash))
+                {
+                    Insert(record);
+                }
+
+                id =
+                    GetFolderId(
+                        record.HeaderId,
+                        record.FolderHash);
+
+                _folderCache[key] = id;
+
+                return id;
+            }
         }
 
         public bool UpdateStatus(
@@ -97,11 +129,11 @@ namespace Meduit.ShareNormalizer.Snowflake.Repository
         {
             string sql =
                 SnowflakeSqlBuilder.UpdateFolderStatus(
-                    _context.Config,
+                    Context.Config,
                     folderId,
                     status);
 
-            return _executor.ExecuteSql(sql);
+            return Executor.ExecuteSql(sql);
         }
 
         public bool UpdateApproval(
@@ -111,12 +143,12 @@ namespace Meduit.ShareNormalizer.Snowflake.Repository
         {
             string sql =
                 SnowflakeSqlBuilder.UpdateFolderApproval(
-                    _context.Config,
+                    Context.Config,
                     folderId,
                     status,
                     approvedBy);
 
-            return _executor.ExecuteSql(sql);
+            return Executor.ExecuteSql(sql);
         }
     }
 }

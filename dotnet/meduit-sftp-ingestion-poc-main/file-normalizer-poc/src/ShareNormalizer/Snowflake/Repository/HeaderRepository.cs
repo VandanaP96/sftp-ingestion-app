@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 
 using Meduit.ShareNormalizer.Snowflake.Infrastructure;
 using Meduit.ShareNormalizer.Snowflake.Models;
@@ -8,21 +9,24 @@ namespace Meduit.ShareNormalizer.Snowflake.Repository
     /// <summary>
     /// Repository responsible for FILE_BATCH_HEADER operations.
     /// </summary>
-    internal sealed class HeaderRepository
+    internal sealed class HeaderRepository : RepositoryBase
     {
-        private readonly SnowflakeContext _context;
-        private readonly SnowCliExecutor _executor;
-        private readonly Logger _logger;
+        
+
+        private readonly ConcurrentDictionary<string,long>
+    _headerCache =
+        new ConcurrentDictionary<string,long>();
 
         public HeaderRepository(
-            SnowflakeContext context,
-            SnowCliExecutor executor,
-            Logger logger)
-        {
-            _context = context;
-            _executor = executor;
-            _logger = logger;
-        }
+    SnowflakeContext context,
+    ISnowflakeExecutor executor,
+    Logger logger)
+    : base(
+        context,
+        executor,
+        logger)
+{
+}
 
         public bool Exists(
             string clientCode,
@@ -31,13 +35,13 @@ namespace Meduit.ShareNormalizer.Snowflake.Repository
         {
             string sql =
                 SnowflakeSqlBuilder.HeaderExists(
-                    _context.Config,
+                    Context.Config,
                     clientCode,
                     sourceSystem,
                     rootFolder);
 
             string result =
-                _executor.ExecuteScalar(sql);
+                Executor.ExecuteScalar(sql);
 
             return result == "1";
         }
@@ -47,14 +51,14 @@ namespace Meduit.ShareNormalizer.Snowflake.Repository
         {
             string sql =
                 SnowflakeSqlBuilder.InsertHeader(
-                    _context.Config,
+                    Context.Config,
                     record);
 
-            _logger.Log(
+            Logger.Log(
                 "HEADER      Creating : " +
                 record.ClientCode);
 
-            return _executor.ExecuteSql(sql);
+            return Executor.ExecuteSql(sql);
         }
 
         public long GetHeaderId(
@@ -64,13 +68,13 @@ namespace Meduit.ShareNormalizer.Snowflake.Repository
         {
             string sql =
                 SnowflakeSqlBuilder.GetHeaderId(
-                    _context.Config,
+                    Context.Config,
                     clientCode,
                     sourceSystem,
                     rootFolder);
 
             string value =
-                _executor.ExecuteScalar(sql);
+                Executor.ExecuteScalar(sql);
 
             long id;
 
@@ -84,20 +88,49 @@ namespace Meduit.ShareNormalizer.Snowflake.Repository
         /// Creates header if required and always returns HEADER_ID.
         /// </summary>
         public long GetOrCreate(
-            HeaderRecord record)
+    HeaderRecord record)
         {
-            if (!Exists(
-                    record.ClientCode,
-                    record.SourceSystem,
-                    record.RootFolder))
+            string key =
+                record.ClientCode + "|" +
+                record.SourceSystem + "|" +
+                record.RootFolder;
+
+            long id;
+
+            if (_headerCache.TryGetValue(
+                    key,
+                    out id))
             {
-                Insert(record);
+                return id;
             }
 
-            return GetHeaderId(
-                record.ClientCode,
-                record.SourceSystem,
-                record.RootFolder);
+            lock (_headerCache)
+            {
+                if (_headerCache.TryGetValue(
+                        key,
+                        out id))
+                {
+                    return id;
+                }
+
+                if (!Exists(
+                        record.ClientCode,
+                        record.SourceSystem,
+                        record.RootFolder))
+                {
+                    Insert(record);
+                }
+
+                id =
+                    GetHeaderId(
+                        record.ClientCode,
+                        record.SourceSystem,
+                        record.RootFolder);
+
+                _headerCache[key] = id;
+
+                return id;
+            }
         }
 
         public bool UpdateAudit(
@@ -106,11 +139,11 @@ namespace Meduit.ShareNormalizer.Snowflake.Repository
         {
             string sql =
                 SnowflakeSqlBuilder.UpdateHeaderAudit(
-                    _context.Config,
+                    Context.Config,
                     headerId,
                     updatedBy);
 
-            return _executor.ExecuteSql(sql);
+            return Executor.ExecuteSql(sql);
         }
     }
 }
