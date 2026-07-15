@@ -38,12 +38,16 @@ echo Using compiler: %CSC%
 /r:System.Data.dll ^
 /r:System.IO.Compression.dll ^
 /r:System.Xml.Linq.dll ^
+/r:"C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.8\Facades\netstandard.dll" ^
 /r:lib\Snowflake.Data.dll ^
 src\ShareNormalizer\*.cs ^
 src\ShareNormalizer\Properties\*.cs ^
+src\ShareNormalizer\Snowflake\Configuration\*.cs ^
 src\ShareNormalizer\Snowflake\Constants\*.cs ^
+
 src\ShareNormalizer\Snowflake\Helpers\*.cs ^
 src\ShareNormalizer\Snowflake\Infrastructure\*.cs ^
+
 src\ShareNormalizer\Snowflake\Mappers\*.cs ^
 src\ShareNormalizer\Snowflake\Models\*.cs ^
 src\ShareNormalizer\Snowflake\Repository\*.cs ^
@@ -56,6 +60,7 @@ if errorlevel 1 (
 )
 
 copy /Y src\ShareNormalizer\normalizer.conf bin\normalizer.conf >nul
+copy /Y lib\*.dll bin\ >nul
 
 echo.
 echo BUILD OK -^> bin\ShareNormalizer.exe
