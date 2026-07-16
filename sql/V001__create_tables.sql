@@ -1,14 +1,14 @@
 -- ============================================================
 -- V001 : Create Tables
--- Schema  : MEDUIT_DEX.SFTP_INGESTION
+-- Schema  : MEDUIT_DEX.DEX
 -- Date    : 2026-07-01
 -- ============================================================
 
 CREATE DATABASE IF NOT EXISTS MEDUIT_DEX;
-CREATE SCHEMA   IF NOT EXISTS MEDUIT_DEX.SFTP_INGESTION;
+CREATE SCHEMA   IF NOT EXISTS MEDUIT_DEX.DEX;
 
 USE DATABASE MEDUIT_DEX;
-USE SCHEMA   SFTP_INGESTION;
+USE SCHEMA   DEX;
 
 
 CREATE OR REPLACE TABLE FILE_BATCH_HEADER

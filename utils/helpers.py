@@ -6,7 +6,7 @@ Shared helper functions.
 from snowflake.snowpark.context import get_active_session
 
 session = get_active_session()
-DB = "MEDUIT_DEX.SFTP_INGESTION"
+DB = "MEDUIT_MDM.DEX"
 
 
 def me() -> str:

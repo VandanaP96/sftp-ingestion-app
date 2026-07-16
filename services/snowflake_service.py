@@ -8,7 +8,7 @@ import pandas as pd
 from snowflake.snowpark.context import get_active_session
 
 session = get_active_session()
-DB = "MEDUIT_DEX.SFTP_INGESTION"
+DB = "MEDUIT_MDM.DEX"
 
 
 def sql(query: str) -> pd.DataFrame:
@@ -24,7 +24,7 @@ def get_clients() -> pd.DataFrame:
     return sql(f"""
         SELECT h.HEADER_ID, h.CLIENT_CODE, h.CLIENT_NAME
         FROM   {DB}.FILE_BATCH_HEADER h
-        INNER JOIN MEDUIT_DEX.DEX.CFG_CLIENT c
+        INNER JOIN MEDUIT_MDM.DEX.CFG_CLIENT c
                ON h.CLIENT_CODE = c.DISPLAY_NAME
         WHERE  h.ACTIVE_FLAG = 'Y'
         ORDER  BY h.CLIENT_NAME
@@ -37,8 +37,8 @@ def is_fully_loaded(client_name: str) -> bool:
     """
     result = sql(f"""
         SELECT COUNT(*) AS CNT
-        FROM   MEDUIT_DEX.DEX.CTL_LANDING_LOAD l
-        JOIN   MEDUIT_DEX.DEX.CFG_CLIENT c ON l.CLIENT_ID = c.CLIENT_ID
+        FROM   MEDUIT_MDM.DEX.CTL_LANDING_LOAD l
+        JOIN   MEDUIT_MDM.DEX.CFG_CLIENT c ON l.CLIENT_ID = c.CLIENT_ID
         WHERE  c.DISPLAY_NAME = '{client_name}'
           AND  l.STATUS       = 'COMPLETE'
     """)

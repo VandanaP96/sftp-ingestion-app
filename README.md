@@ -25,7 +25,7 @@ E: Drive (Windows Share)
   .NET Scanner (dotnet/)
   Crawls organized\ folder tree
         ↓
-  Snowflake — MEDUIT_DEX.SFTP_INGESTION
+  Snowflake — MEDUIT_DEX.DEX
   FILE_BATCH_HEADER / FOLDER / DETAIL
   FILE_STATUS = DISCOVERED
         ↓
@@ -45,7 +45,7 @@ E: Drive (Windows Share)
 
 **Account:** `qcwzazw-fb12160`  
 **Database:** `MEDUIT_DEX`  
-**Schema:** `SFTP_INGESTION`  
+**Schema:** `DEX`  
 **Warehouse:** `COMPUTE_WH`
 
 ### Step 1 — Create tables
@@ -66,7 +66,7 @@ FILE_ACTIVITY_LOG  → 0 rows
 
 Via Snowflake UI:
 1. Snowsight → Streamlit → + Streamlit App
-2. Database: `MEDUIT_DEX`, Schema: `SFTP_INGESTION`, Warehouse: `COMPUTE_WH`
+2. Database: `MEDUIT_DEX`, Schema: `DEX`, Warehouse: `COMPUTE_WH`
 3. Paste contents of `streamlit_app.py` → Run
 
 Via Snowflake CLI:

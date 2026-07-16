@@ -1,13 +1,13 @@
 definition_version: 1
 streamlit:
-  name: sftp_ingestion_review
+  name: DEX_review
   stage: streamlit_stage
-  query_warehouse: COMPUTE_WH
+  query_warehouse: PROD_SMALL
   main_file: streamlit_app.py
   title: "SFTP Ingestion - File Review"
   env_file: environment.yml
-  database: MEDUIT_DEX
-  schema: SFTP_INGESTION
+  database: MEDUIT_MDM
+  schema: DEX
   additional_source_files:
     - "services/snowflake_service.py"
     - "services/__init__.py"

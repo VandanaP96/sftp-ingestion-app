@@ -7,7 +7,7 @@
 -- ============================================================
 
 USE DATABASE MEDUIT_DEX;
-USE SCHEMA   SFTP_INGESTION;
+USE SCHEMA   DEX;
 
 
 -- ── FILE_BATCH_HEADER (one row per client) ────────────────────────────────────
