@@ -1,12 +1,13 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Threading.Tasks;
-
 using Meduit.ShareNormalizer.Snowflake.Helpers;
 using Meduit.ShareNormalizer.Snowflake.Infrastructure;
 using Meduit.ShareNormalizer.Snowflake.Models;
 using Meduit.ShareNormalizer.Snowflake.Repository;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
+using System.Globalization;
 
 namespace Meduit.ShareNormalizer.Snowflake.Services
 {
@@ -253,15 +254,35 @@ namespace Meduit.ShareNormalizer.Snowflake.Services
                     string stageFolder =
                         BuildStageFolder(job);
 
-                    bool uploaded =
-                        _stageExecutor.PutFile(
-                            job.CurrentPath,
-                            stageFolder);
+                    string tempFile =
+    Path.Combine(
+        Path.GetTempPath(),
+        BuildStageFileName(job));
 
-                    if (!uploaded)
+                    File.Copy(
+                        job.CurrentPath,
+                        tempFile,
+                        true);
+
+                    try
                     {
-                        throw new ApplicationException(
-                            "PUT returned FALSE.");
+                        bool uploaded =
+                            _stageExecutor.PutFile(
+                                tempFile,
+                                stageFolder);
+
+                        if (!uploaded)
+                        {
+                            throw new ApplicationException(
+                                "PUT returned FALSE.");
+                        }
+                    }
+                    finally
+                    {
+                        if (File.Exists(tempFile))
+                        {
+                            File.Delete(tempFile);
+                        }
                     }
 
                     return;
@@ -339,35 +360,481 @@ _logger.Log(
             return archiveFile;
         }
 
+
         /// <summary>
-        /// Builds the Snowflake stage folder.
+        /// Converts a folder/file name into Snowflake stage format.
+        /// Only replaces spaces with underscore.
+        /// </summary>
+        private string ToStageName(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return value;
+
+            return value.Replace(" ", "_");
+        }
+
+        private string BuildStageFileName(
+    StageUploadJob job)
+        {
+            //
+            // Original filename without extension
+            //
+            string name =
+                Path.GetFileNameWithoutExtension(
+                    job.CurrentFileName);
+
+            //
+            // Get stage folder parts
+            // Example:
+            // MCD1/MCD1_MOMI/2026_07
+            //
+            string stageFolder =
+                BuildStageFolder(job);
+
+            string[] folderParts =
+                stageFolder.Split('/');
+
+            //
+            // Client prefix
+            // Example:
+            // MCD1_MOMI
+            //
+            string clientPrefix = "";
+
+            if (folderParts.Length >= 2)
+            {
+                clientPrefix =
+                    folderParts[1];
+            }
+
+            //
+            // Extract business date
+            //
+            DateTime fileDate =
+                ExtractBestDate(
+                    job.CurrentFileName,
+                    File.GetLastWriteTime(job.CurrentPath));
+
+            //
+            // Remove extension
+            //
+            name =
+                Regex.Replace(
+                    name,
+                    @"[^\w]+",
+                    "_");
+
+            //
+            // Collapse duplicate underscores
+            //
+            name =
+                Regex.Replace(
+                    name,
+                    "_+",
+                    "_");
+
+            //
+            // Trim leading/trailing underscore
+            //
+            name =
+                name.Trim('_');
+
+            //
+            // Prefix client folder
+            //
+            if (!string.IsNullOrWhiteSpace(clientPrefix))
+            {
+                name =
+                    clientPrefix + "_" + name;
+            }
+
+            //
+            // Append YYYYMMDD
+            //
+            name =
+                name
+                + "_"
+                + fileDate.ToString("yyyyMMdd");
+
+            return
+                name
+                + Path.GetExtension(job.CurrentFileName);
+        }
+
+        private string RemoveSpecialCharacters(string value)
+        {
+            value = Regex.Replace(
+                value,
+                @"[^A-Za-z0-9]+",
+                "_");
+
+            value = Regex.Replace(
+                value,
+                @"_+",
+                "_");
+
+            return value.Trim('_');
+        }
+
+
+        private DateTime ExtractBestDate(
+    string fileName,
+    DateTime fallback)
+        {
+            List<DateTime> dates =
+                new List<DateTime>();
+
+            AddDatesFromRegex(
+                dates,
+                fileName,
+                @"(?<!\d)(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(?!\d)",
+                "yyyyMMdd");
+
+            AddDatesFromRegex(
+                dates,
+                fileName,
+                @"(?<!\d)(20\d{2})[-_.](0?[1-9]|1[0-2])[-_.](0?[1-9]|[12]\d|3[01])(?!\d)",
+                "yyyy-M-d",
+                true);
+
+            //
+            // MMDDYYYY
+            //
+            AddDatesFromRegex(
+                dates,
+                fileName,
+                @"(?<!\d)(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(20\d{2})(?!\d)",
+                "MMddyyyy");
+
+            //
+            // MMDDYY
+            //
+            AddDatesFromRegex(
+                dates,
+                fileName,
+                @"(?<!\d)(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(\d{2})(?!\d)",
+                "MMddyy");
+
+            AddMonthNameDates(
+                dates,
+                fileName);
+
+            if (dates.Count == 0)
+                return fallback;
+
+            //
+            // Return the first valid date found.
+            // (Healthcare filenames almost always contain only one business date.)
+            //
+            return dates[0];
+        }
+
+        private void AddDatesFromRegex(
+    List<DateTime> dates,
+    string text,
+    string pattern,
+    string format,
+    bool normalizeSeparators = false)
+        {
+            MatchCollection matches =
+                Regex.Matches(
+                    text,
+                    pattern,
+                    RegexOptions.IgnoreCase);
+
+            foreach (Match match in matches)
+            {
+                string value =
+                    match.Value;
+
+                if (normalizeSeparators)
+                {
+                    value =
+                        value.Replace('_', '-')
+                             .Replace('.', '-');
+                }
+
+                DateTime dt;
+
+                if (DateTime.TryParseExact(
+                    value,
+                    format,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out dt))
+                {
+                    dates.Add(dt);
+                }
+            }
+        }
+
+        private void AddMonthNameDates(
+    List<DateTime> dates,
+    string fileName)
+        {
+            MatchCollection matches;
+
+            //
+            // 04 Apr 26
+            // 04-Apr-26
+            // 04_Apr_26
+            //
+            matches =
+                Regex.Matches(
+                    fileName,
+                    @"(?<!\d)(0?[1-9]|[12]\d|3[01])[-_. ](Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[-_. ](\d{2}|\d{4})(?!\d)",
+                    RegexOptions.IgnoreCase);
+
+            foreach (Match match in matches)
+            {
+                string value =
+                    Regex.Replace(
+                        match.Value,
+                        @"[-_.]+",
+                        " ");
+
+                DateTime dt;
+
+                if (DateTime.TryParseExact(
+                    value,
+                    new[]
+                    {
+                "d MMM yy",
+                "dd MMM yy",
+                "d MMM yyyy",
+                "dd MMM yyyy"
+                    },
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out dt))
+                {
+                    dates.Add(dt);
+                }
+            }
+
+            //
+            // March 2025
+            // Apr 2026
+            //
+            matches =
+                Regex.Matches(
+                    fileName,
+                    @"(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[-_ ]?(20\d{2}|\d{2})",
+                    RegexOptions.IgnoreCase);
+
+            foreach (Match match in matches)
+            {
+                string value =
+                    Regex.Replace(
+                        match.Value,
+                        @"[-_]+",
+                        " ");
+
+                DateTime dt;
+
+                if (DateTime.TryParseExact(
+                    "01 " + value,
+                    new[]
+                    {
+                "dd MMM yyyy",
+                "dd MMM yy",
+                "dd MMMM yyyy"
+                    },
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out dt))
+                {
+                    dates.Add(dt);
+                }
+            }
+        }
+
+
+
+
+        private DateTime ResolveFileDate(
+    string fileName)
+        {
+            System.Globalization.CultureInfo culture =
+                System.Globalization.CultureInfo.InvariantCulture;
+
+            //
+            // YYYYMMDD
+            //
+            System.Text.RegularExpressions.Match match =
+                System.Text.RegularExpressions.Regex.Match(
+                    fileName,
+                    @"(?<!\d)(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(?!\d)");
+
+            if (match.Success)
+            {
+                return DateTime.ParseExact(
+                    match.Value,
+                    "yyyyMMdd",
+                    culture);
+            }
+
+            //
+            // YYYY-MM-DD
+            //
+            match =
+                System.Text.RegularExpressions.Regex.Match(
+                    fileName,
+                    @"(20\d{2})[-_](0[1-9]|1[0-2])[-_](0[1-9]|[12]\d|3[01])");
+
+            if (match.Success)
+            {
+                return DateTime.ParseExact(
+                    match.Value.Replace("_", "-"),
+                    "yyyy-MM-dd",
+                    culture);
+            }
+
+            //
+            // MMDDYYYY
+            //
+            match =
+                System.Text.RegularExpressions.Regex.Match(
+                    fileName,
+                    @"(?<!\d)(0[1-9]|1[0-2])([0-2]\d|3[01])(20\d{2})(?!\d)");
+
+            if (match.Success)
+            {
+                return DateTime.ParseExact(
+                    match.Value,
+                    "MMddyyyy",
+                    culture);
+            }
+
+            //
+            // MMDDYY
+            //
+            match =
+                System.Text.RegularExpressions.Regex.Match(
+                    fileName,
+                    @"(?<!\d)(0[1-9]|1[0-2])([0-2]\d|3[01])(\d{2})(?!\d)");
+
+            if (match.Success)
+            {
+                return DateTime.ParseExact(
+                    match.Value,
+                    "MMddyy",
+                    culture);
+            }
+
+            //
+            // Month YYYY
+            //
+            match =
+                System.Text.RegularExpressions.Regex.Match(
+                    fileName,
+                    @"(?i)(January|February|March|April|May|June|July|August|September|October|November|December)\s+(20\d{2})");
+
+            if (match.Success)
+            {
+                DateTime dt =
+                    DateTime.ParseExact(
+                        match.Value,
+                        "MMMM yyyy",
+                        culture);
+
+                return new DateTime(
+                    dt.Year,
+                    dt.Month,
+                    1);
+            }
+
+            //
+            // YYYY_MM
+            //
+            match =
+                System.Text.RegularExpressions.Regex.Match(
+                    fileName,
+                    @"(20\d{2})[-_](0[1-9]|1[0-2])");
+
+            if (match.Success)
+            {
+                int year =
+                    int.Parse(
+                        match.Groups[1].Value);
+
+                int month =
+                    int.Parse(
+                        match.Groups[2].Value);
+
+                return new DateTime(
+                    year,
+                    month,
+                    1);
+            }
+
+            //
+            // No date found.
+            // Use today's date.
+            //
+            return DateTime.Today;
+        }
+
+        /// <summary>
+        /// Builds the stage folder preserving the directory structure
+        /// but prefixes the client folder with the source system.
+        ///
+        //// Example:
+        /// MCD1/MOMI CLIENT/2026_07
+        ///
+        /// becomes
+        ///
+        /// MCD1/MCD1_MOMI_CLIENT/2026_07
         /// </summary>
         private string BuildStageFolder(
-            StageUploadJob job)
+    StageUploadJob job)
         {
-            
-
             string normalizedRoot =
-    Path.GetFullPath(
-        _config.NormalizedRoot);
+                Path.GetFullPath(
+                    _config.NormalizedRoot);
 
-string currentFolder =
-    Path.GetFullPath(
-        Path.GetDirectoryName(
-            job.CurrentPath));
+            string currentFolder =
+                Path.GetFullPath(
+                    Path.GetDirectoryName(
+                        job.CurrentPath));
 
-string relativePath =
-    currentFolder.Substring(
-        normalizedRoot.Length);
+            string relativePath =
+                currentFolder.Substring(
+                    normalizedRoot.Length);
 
-relativePath =
-    relativePath
-        .TrimStart('\\')
-        .Replace("\\", "/");
+            relativePath =
+                relativePath.TrimStart('\\');
+
+            string[] parts =
+                relativePath.Split('\\');
+
+            if (parts.Length >= 2)
+            {
+                string system =
+                    parts[0];
+
+                string client =
+                    parts[1];
+
+                client =
+                    System.Text.RegularExpressions.Regex.Replace(
+        client.Trim(),
+        @"\s+",
+        "_");
+
+                parts[1] =
+                    system + "_" + client;
+            }
+
+            relativePath =
+                string.Join(
+                    "/",
+                    parts);
 
             _logger.Log(
-    "Stage Folder = " + relativePath);
-    
+                "Stage Folder = " +
+                relativePath);
+
             return relativePath;
         }
 
@@ -427,24 +894,23 @@ relativePath =
         /// Returns the full stage path stored in DB.
         /// </summary>
         private string BuildStageFullPath(
-            StageUploadJob job)
+    StageUploadJob job)
         {
             string folder =
                 BuildStageFolder(job);
 
             string fullPath =
-    string.Format(
-                "@{0}/{1}/{2}",
-                _config.SnowflakeStage,
-                folder.Replace("\\", "/"),
-                job.CurrentFileName);
+                string.Format(
+                    "@{0}/{1}/{2}",
+                    _config.SnowflakeStage,
+                    folder,
+                    BuildStageFileName(job));
 
-                _logger.Log(
-    "Stage Full Path : "
-    + fullPath);
+            _logger.Log(
+                "Stage Full Path : "
+                + fullPath);
 
-return fullPath;
-
+            return fullPath;
         }
 
         /// <summary>

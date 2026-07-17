@@ -128,13 +128,23 @@ namespace Meduit.ShareNormalizer
                 int year = lastWrite.Year, month = lastWrite.Month;
                 if (_cfg.MinYear > 0 && HasConflictingYear(fileName, dirSegs, _cfg.MinYear))
                     year = _cfg.MinYear;
-                return string.Format(CultureInfo.InvariantCulture, "{0:D4}-{1:D2}", year, month);
+                return string.Format(
+    CultureInfo.InvariantCulture,
+    "{0:D4}_{1:D2}",
+    year,
+    month);
             }
 
             int y, m;
             if (TryFilenameDate(fileName, out y, out m))
-                return string.Format(CultureInfo.InvariantCulture, "{0:D4}-{1:D2}", y, m);
-            return lastWrite.ToString("yyyy-MM", CultureInfo.InvariantCulture);
+                return string.Format(
+    CultureInfo.InvariantCulture,
+    "{0:D4}_{1:D2}",
+    y,
+    m);
+            return lastWrite.ToString(
+    "yyyy_MM",
+    CultureInfo.InvariantCulture);
         }
 
         // True when the filename or any folder segment names a year different from 'target' - i.e.
